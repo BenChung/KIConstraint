@@ -1,0 +1,2 @@
+kicad-python>=0.2.0
+slvs==3.2rc1

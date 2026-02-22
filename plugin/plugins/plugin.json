@@ -1,0 +1,36 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "com.github.benchung.kiconstraint",
+    "name": "KiConstraint",
+    "description": "KiCAD constraint management plugin",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.10"
+    },
+    "actions": [
+        {
+            "identifier": "run-kiconstraint",
+            "name": "Run KiConstraint",
+            "description": "Run the KiConstraint plugin",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "main.py",
+            "icons-light": ["icon.png"],
+            "icons-dark": ["icon.png"]
+        },
+        {
+            "identifier": "test",
+            "name": "Test",
+            "description": "Test the KiConstraint plugin connection",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "test_action.py",
+            "icons-light": ["icon.png"],
+            "icons-dark": ["icon.png"]
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "KiConstraint",
+    "description": "KiCAD constraint management plugin",
+    "description_full": "A plugin for managing design constraints in KiCAD PCB layouts.",
+    "identifier": "com.github.benchung.kiconstraint",
+    "type": "plugin",
+    "author": {
+        "name": "Ben Chung",
+        "contact": {
+            "github": "https://github.com/benchung"
+        }
+    },
+    "license": "MIT",
+    "resources": {},
+    "versions": [
+        {
+            "version": "0.1.0",
+            "status": "development",
+            "kicad_version": "9.0",
+            "runtime": "ipc"
+        }
+    ]
+}
