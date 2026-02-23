@@ -143,46 +143,121 @@ def map_dimensions(
 
 class ConstraintSpec:
     """Base class for parsed constraint specifications."""
+    def apply_to_point(
+        self: ConstraintSpec,
+        sketch: Sketch, 
+        entry: MappedPointDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"point {entry.name!r}"
+        raise ValueError(f"{ctx}: constraint {type(self).__name__} requires an edge, not a point")
 
+    def apply_to_edge(
+        self: ConstraintSpec,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"edge {entry.name!r}"
+        raise ValueError(f"{ctx}: constraint {type(self).__name__} requires a point, not an edge")
 
 @dataclass(frozen=True)
 class Distance(ConstraintSpec):
     value_mm: float
+    def apply_to_edge(
+        self: Distance,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        return sketch.distance(entry.line.p1, entry.line.p2, self.value_mm)
 
 
 @dataclass(frozen=True)
 class Parallel(ConstraintSpec):
     other: str
+    def apply_to_edge(
+        self: Parallel,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"edge {entry.name!r}"
+        return sketch.parallel(entry.line, _resolve_edge(self.other, dim_map, ctx))
 
 
 @dataclass(frozen=True)
 class Perpendicular(ConstraintSpec):
     other: str
+    def apply_to_edge(
+        self: Perpendicular,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"edge {entry.name!r}"
+        return sketch.perpendicular(entry.line, _resolve_edge(self.other, dim_map, ctx))
 
 
 @dataclass(frozen=True)
 class Coincident(ConstraintSpec):
     other: str
+    def apply_to_point(
+        self: Coincident,
+        sketch: Sketch, 
+        entry: MappedPointDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"point {entry.name!r}"
+        return sketch.coincident(entry.point, _resolve_point(self.other, dim_map, ctx))
 
 
 @dataclass(frozen=True)
 class Vertical(ConstraintSpec):
-    pass
+    def apply_to_edge(
+        self: Vertical,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"edge {entry.name!r}"
+        return sketch.vertical(entry.line)
 
 
 @dataclass(frozen=True)
 class Horizontal(ConstraintSpec):
-    pass
-
+    def apply_to_edge(
+        self: Horizontal,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        return sketch.horizontal(entry.line)
 
 @dataclass(frozen=True)
 class Equal(ConstraintSpec):
     other: str
+    def apply_to_edge(
+        self: Equal,
+        sketch: Sketch, 
+        entry: MappedEdgeDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"edge {entry.name!r}"
+        return sketch.equal(entry.line, _resolve_edge(self.other, dim_map, ctx))
 
 
 @dataclass(frozen=True)
 class Midpoint(ConstraintSpec):
     other: str
+    def apply_to_point(
+        self:Midpoint,
+        sketch: Sketch, 
+        entry: MappedPointDimension,
+        dim_map: DimensionMapping
+    ) -> Constraint:
+        ctx = f"point {entry.name!r}"
+        return sketch.midpoint(entry.point, _resolve_edge(self.other, dim_map, ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -256,46 +331,6 @@ def _resolve_point(name: str, dim_map: DimensionMapping, context: str) -> Point:
     return entry.point
 
 
-def _apply_to_edge(
-    spec: ConstraintSpec,
-    sketch: Sketch,
-    entry: MappedEdgeDimension,
-    dim_map: DimensionMapping,
-) -> Constraint:
-    ctx = f"edge {entry.name!r}"
-    if isinstance(spec, Distance):
-        return sketch.distance(entry.line.p1, entry.line.p2, spec.value_mm)
-    if isinstance(spec, Parallel):
-        return sketch.parallel(entry.line, _resolve_edge(spec.other, dim_map, ctx))
-    if isinstance(spec, Perpendicular):
-        return sketch.perpendicular(entry.line, _resolve_edge(spec.other, dim_map, ctx))
-    if isinstance(spec, Vertical):
-        return sketch.vertical(entry.line)
-    if isinstance(spec, Horizontal):
-        return sketch.horizontal(entry.line)
-    if isinstance(spec, Equal):
-        return sketch.equal(entry.line, _resolve_edge(spec.other, dim_map, ctx))
-    if isinstance(spec, Midpoint):
-        return sketch.midpoint(_resolve_point(spec.other, dim_map, ctx), entry.line)
-    if isinstance(spec, Coincident):
-        raise ValueError(f"{ctx}: 'coin' is not applicable to edges")
-    raise ValueError(f"{ctx}: unknown constraint {type(spec).__name__}")
-
-
-def _apply_to_point(
-    spec: ConstraintSpec,
-    sketch: Sketch,
-    entry: MappedPointDimension,
-    dim_map: DimensionMapping,
-) -> Constraint:
-    ctx = f"point {entry.name!r}"
-    if isinstance(spec, Coincident):
-        return sketch.coincident(entry.point, _resolve_point(spec.other, dim_map, ctx))
-    if isinstance(spec, Midpoint):
-        return sketch.midpoint(entry.point, _resolve_edge(spec.other, dim_map, ctx))
-    raise ValueError(f"{ctx}: constraint {type(spec).__name__} requires an edge, not a point")
-
-
 def apply_dimension_constraints(
     sketch: Sketch,
     dim_map: DimensionMapping,
@@ -308,10 +343,10 @@ def apply_dimension_constraints(
 
     for entry in dim_map.edges.values():
         for spec in parse_suffix(entry.source.suffix):
-            constraints.append(_apply_to_edge(spec, sketch, entry, dim_map))
+            constraints.append(spec.apply_to_edge(sketch, entry, dim_map))
 
     for entry in dim_map.points.values():
         for spec in parse_suffix(entry.source.suffix):
-            constraints.append(_apply_to_point(spec, sketch, entry, dim_map))
+            constraints.append(spec.apply_to_point(sketch, entry, dim_map))
 
     return constraints

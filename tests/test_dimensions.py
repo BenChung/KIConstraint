@@ -292,7 +292,7 @@ class TestApplyErrors:
         sketch = Sketch()
         entry = _make_edge_entry(sketch, "e", 0, 0, 5, 0, suffix="c(other)")
         dim_map = DimensionMapping(edges={"e": entry})
-        with pytest.raises(ValueError, match="coin.*not applicable to edges"):
+        with pytest.raises(ValueError, match=".*requires a point, not an edge"):
             apply_dimension_constraints(sketch, dim_map)
 
     def test_vert_on_point_raises(self):
