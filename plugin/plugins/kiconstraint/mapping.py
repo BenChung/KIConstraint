@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Sequence, Union
 
 from kipy.common_types import (
     Arc as KiArc,
@@ -19,7 +20,9 @@ from kipy.board_types import (
     PadStackShape,
 )
 
-from .solver.constraints import Constraint
+from kipy.geometry import Vector2
+
+from .solver.constraints import Constraint, SolveResult
 from .solver.entities import Arc, Circle, Cubic, Line, Point
 from .solver.sketch import Sketch
 
@@ -631,3 +634,90 @@ def _map_bezier(sketch: Sketch, bez: KiBezier) -> MappedBezier:
         source=bez, start=p1, control1=p2,
         control2=p3, end=p4, cubic=cubic,
     )
+
+
+# ---------------------------------------------------------------------------
+# Back-propagation of solved values
+# ---------------------------------------------------------------------------
+
+
+def _v2(point: Point) -> Vector2:
+    """Convert a solved Point to a kipy Vector2."""
+    return Vector2.from_xy_mm(point.u, point.v)
+
+
+def _write_back_segment(m: MappedSegment) -> None:
+    m.source.start = _v2(m.start)
+    m.source.end = _v2(m.end)
+
+
+def _write_back_arc(m: MappedArc) -> None:
+    m.source.start = _v2(m.start)
+    m.source.end = _v2(m.end)
+    # KiCAD arcs store start/mid/end; the solver stores center/start/end.
+    # Compute the midpoint on the arc from the solved center and endpoints.
+    cx, cy = m.center.u, m.center.v
+    sa = math.atan2(m.start.v - cy, m.start.u - cx)
+    ea = math.atan2(m.end.v - cy, m.end.u - cx)
+    sweep = (ea - sa) % (2 * math.pi)
+    mid_angle = sa + sweep / 2
+    radius = math.hypot(m.start.u - cx, m.start.v - cy)
+    m.source.mid = Vector2.from_xy_mm(
+        cx + radius * math.cos(mid_angle),
+        cy + radius * math.sin(mid_angle),
+    )
+
+
+def _write_back_circle(m: MappedCircle) -> None:
+    m.source.center = _v2(m.center)
+    # radius_point sits at center + (radius, 0)
+    m.source.radius_point = Vector2.from_xy_mm(
+        m.center.u + m.circle.radius.value, m.center.v,
+    )
+
+
+def _write_back_rectangle(m: MappedRectangle) -> None:
+    m.source.top_left = _v2(m.top_left)
+    m.source.bottom_right = _v2(m.bottom_right)
+
+
+def _write_back_bezier(m: MappedBezier) -> None:
+    m.source.start = _v2(m.start)
+    m.source.control1 = _v2(m.control1)
+    m.source.control2 = _v2(m.control2)
+    m.source.end = _v2(m.end)
+
+
+_WRITE_BACK = {
+    MappedSegment: _write_back_segment,
+    MappedArc: _write_back_arc,
+    MappedCircle: _write_back_circle,
+    MappedRectangle: _write_back_rectangle,
+    MappedBezier: _write_back_bezier,
+}
+
+
+def write_back_shapes(
+    mapped: Sequence[MappedShape],
+    result: SolveResult,
+) -> list[KiShape]:
+    """Write solved positions back to the original KiCAD graphic objects.
+
+    Returns the list of modified source objects (for passing to
+    ``board.update_items()``).
+
+    Raises :class:`ValueError` if the solve did not succeed.
+    """
+    if not result.ok:
+        raise ValueError(
+            f"Cannot write back: solve failed (result_code={result.result_code})"
+        )
+
+    sources: list[KiShape] = []
+    for m in mapped:
+        writer = _WRITE_BACK.get(type(m))
+        if writer is None:
+            raise TypeError(f"No write-back for {type(m).__name__}")
+        writer(m)
+        sources.append(m.source)
+    return sources

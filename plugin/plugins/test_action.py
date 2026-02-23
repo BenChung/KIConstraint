@@ -3,7 +3,7 @@
 from kipy import KiCad
 from kiconstraint.solver import Sketch
 from kiconstraint.dimensions import apply_dimension_constraints, map_dimensions
-from kiconstraint.mapping import map_shape
+from kiconstraint.mapping import map_shape, write_back_shapes
 
 
 def main():
@@ -30,6 +30,13 @@ def main():
 
     result = sketch.solve()
     print(f"Solve: ok={result.ok}, dof={result.dof}")
+
+    if result.ok:
+        modified = write_back_shapes(mapped, result)
+        board.update_items(modified)
+        print(f"Wrote back {len(modified)} shapes")
+    else:
+        print("Solve failed — skipping write-back")
 
 
 if __name__ == "__main__":

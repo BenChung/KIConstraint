@@ -11,6 +11,7 @@ from kiconstraint.mapping import (
     MappedRectangle,
     MappedSegment,
     map_shape,
+    write_back_shapes,
 )
 from kiconstraint.solver import Sketch
 from kiconstraint.solver.entities import Arc, Circle, Cubic, Line
@@ -364,3 +365,115 @@ class TestNoConstraintShapes:
         bez = _make_bezier(0, 0, 3 * NM, 10 * NM, 7 * NM, 10 * NM, 10 * NM, 0)
         m = map_shape(sketch, bez)
         assert m.constraints == []
+
+
+# -- write-back tests -------------------------------------------------------
+
+
+def _to_mm(nm):
+    return nm / NM
+
+
+class TestWriteBackSegment:
+    def test_positions_updated(self):
+        sketch = Sketch()
+        seg = _make_segment(0, 0, 10 * NM, 0)
+        m = map_shape(sketch, seg)
+        # Pin start and move end
+        sketch.horizontal(m.line)
+        m.end.move(5.0, 0.0)
+        sketch.dragged(m.end)
+        result = sketch.solve()
+        assert result.ok
+        modified = write_back_shapes([m], result)
+        assert len(modified) == 1
+        assert _to_mm(seg.start.x) == pytest.approx(m.start.u, abs=1e-4)
+        assert _to_mm(seg.start.y) == pytest.approx(m.start.v, abs=1e-4)
+        assert _to_mm(seg.end.x) == pytest.approx(m.end.u, abs=1e-4)
+        assert _to_mm(seg.end.y) == pytest.approx(m.end.v, abs=1e-4)
+
+
+class TestWriteBackRectangle:
+    def test_positions_updated(self):
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+        m.top_left.move(1.0, 1.0)
+        sketch.dragged(m.top_left)
+        result = sketch.solve()
+        assert result.ok
+        write_back_shapes([m], result)
+        assert _to_mm(rect.top_left.x) == pytest.approx(m.top_left.u, abs=1e-4)
+        assert _to_mm(rect.top_left.y) == pytest.approx(m.top_left.v, abs=1e-4)
+        assert _to_mm(rect.bottom_right.x) == pytest.approx(m.bottom_right.u, abs=1e-4)
+        assert _to_mm(rect.bottom_right.y) == pytest.approx(m.bottom_right.v, abs=1e-4)
+
+
+class TestWriteBackCircle:
+    def test_positions_updated(self):
+        sketch = Sketch()
+        circ = _make_circle(5 * NM, 5 * NM, 10 * NM, 5 * NM)
+        m = map_shape(sketch, circ)
+        result = sketch.solve()
+        assert result.ok
+        write_back_shapes([m], result)
+        assert _to_mm(circ.center.x) == pytest.approx(m.center.u, abs=1e-4)
+        assert _to_mm(circ.center.y) == pytest.approx(m.center.v, abs=1e-4)
+        # radius_point should be at center + (radius, 0)
+        assert _to_mm(circ.radius_point.x) == pytest.approx(
+            m.center.u + m.circle.radius.value, abs=1e-4)
+        assert _to_mm(circ.radius_point.y) == pytest.approx(m.center.v, abs=1e-4)
+
+
+class TestWriteBackBezier:
+    def test_positions_updated(self):
+        sketch = Sketch()
+        bez = _make_bezier(0, 0, 3 * NM, 10 * NM, 7 * NM, 10 * NM, 10 * NM, 0)
+        m = map_shape(sketch, bez)
+        result = sketch.solve()
+        assert result.ok
+        write_back_shapes([m], result)
+        assert _to_mm(bez.start.x) == pytest.approx(m.start.u, abs=1e-4)
+        assert _to_mm(bez.start.y) == pytest.approx(m.start.v, abs=1e-4)
+        assert _to_mm(bez.control1.x) == pytest.approx(m.control1.u, abs=1e-4)
+        assert _to_mm(bez.control1.y) == pytest.approx(m.control1.v, abs=1e-4)
+        assert _to_mm(bez.control2.x) == pytest.approx(m.control2.u, abs=1e-4)
+        assert _to_mm(bez.control2.y) == pytest.approx(m.control2.v, abs=1e-4)
+        assert _to_mm(bez.end.x) == pytest.approx(m.end.u, abs=1e-4)
+        assert _to_mm(bez.end.y) == pytest.approx(m.end.v, abs=1e-4)
+
+
+class TestWriteBackArc:
+    def test_positions_updated(self):
+        r = 10 * NM
+        mid_v = int(r * math.cos(math.pi / 4))
+        sketch = Sketch()
+        arc = _make_arc(r, 0, mid_v, mid_v, 0, r)
+        m = map_shape(sketch, arc)
+        result = sketch.solve()
+        assert result.ok
+        write_back_shapes([m], result)
+        assert _to_mm(arc.start.x) == pytest.approx(m.start.u, abs=0.01)
+        assert _to_mm(arc.start.y) == pytest.approx(m.start.v, abs=0.01)
+        assert _to_mm(arc.end.x) == pytest.approx(m.end.u, abs=0.01)
+        assert _to_mm(arc.end.y) == pytest.approx(m.end.v, abs=0.01)
+        # mid should lie on the arc at the correct distance from center
+        mid_x = _to_mm(arc.mid.x)
+        mid_y = _to_mm(arc.mid.y)
+        radius_mm = math.hypot(m.start.u - m.center.u, m.start.v - m.center.v)
+        mid_r = math.hypot(mid_x - m.center.u, mid_y - m.center.v)
+        assert mid_r == pytest.approx(radius_mm, abs=0.01)
+
+
+class TestWriteBackErrors:
+    def test_failed_solve_raises(self):
+        sketch = Sketch()
+        seg = _make_segment(0, 0, 10 * NM, 0)
+        m = map_shape(sketch, seg)
+        # Create an inconsistent system
+        sketch.distance(m.start, m.end, 5.0)
+        sketch.distance(m.start, m.end, 10.0)
+        result = sketch.solve()
+        assert not result.ok
+        with pytest.raises(ValueError, match="solve failed"):
+            write_back_shapes([m], result)
