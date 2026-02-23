@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Union
 
 from kipy.common_types import (
@@ -30,16 +31,41 @@ def _to_mm(nm: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Mapped geometry base class
+# ---------------------------------------------------------------------------
+
+
+class MappedGeometry(ABC):
+    """Base class for all mapped geometry objects.
+
+    Every subclass must provide:
+    - ``points``: all solver :class:`Point` entities in this geometry.
+    - ``constraints``: solver constraints that maintain the shape
+      (dataclass field, may be empty).
+    """
+
+    @property
+    @abstractmethod
+    def points(self) -> list[Point]: ...
+
+    # ``constraints`` is a dataclass field on every concrete subclass
+    # rather than an abstract property, because @property descriptors
+    # on a base class shadow dataclass fields of the same name.
+    constraints: list[Constraint]
+
+
+# ---------------------------------------------------------------------------
 # Mapped shape dataclasses
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class MappedSegment:
+class MappedSegment(MappedGeometry):
     source: KiSegment
     start: Point
     end: Point
     line: Line
+    constraints: list[Constraint] = field(default_factory=list)
 
     @property
     def points(self) -> list[Point]:
@@ -47,12 +73,13 @@ class MappedSegment:
 
 
 @dataclass(frozen=True)
-class MappedArc:
+class MappedArc(MappedGeometry):
     source: KiArc
     center: Point
     start: Point
     end: Point
     arc: Arc
+    constraints: list[Constraint] = field(default_factory=list)
 
     @property
     def points(self) -> list[Point]:
@@ -60,10 +87,11 @@ class MappedArc:
 
 
 @dataclass(frozen=True)
-class MappedCircle:
+class MappedCircle(MappedGeometry):
     source: KiCircle
     center: Point
     circle: Circle
+    constraints: list[Constraint] = field(default_factory=list)
 
     @property
     def points(self) -> list[Point]:
@@ -71,7 +99,7 @@ class MappedCircle:
 
 
 @dataclass(frozen=True)
-class MappedRectangle:
+class MappedRectangle(MappedGeometry):
     source: KiRectangle
     top_left: Point
     top_right: Point
@@ -89,13 +117,14 @@ class MappedRectangle:
 
 
 @dataclass(frozen=True)
-class MappedBezier:
+class MappedBezier(MappedGeometry):
     source: KiBezier
     start: Point
     control1: Point
     control2: Point
     end: Point
     cubic: Cubic
+    constraints: list[Constraint] = field(default_factory=list)
 
     @property
     def points(self) -> list[Point]:
@@ -112,7 +141,7 @@ class ChamferCorner:
 
 
 @dataclass(frozen=True)
-class MappedPadCircle:
+class MappedPadCircle(MappedGeometry):
     source: PadStackLayer
     center: Point
     circle: Circle
@@ -124,7 +153,7 @@ class MappedPadCircle:
 
 
 @dataclass(frozen=True)
-class MappedPadRectangle:
+class MappedPadRectangle(MappedGeometry):
     source: PadStackLayer
     center: Point
     tl: Point
@@ -144,7 +173,7 @@ class MappedPadRectangle:
 
 
 @dataclass(frozen=True)
-class MappedPadTrapezoid:
+class MappedPadTrapezoid(MappedGeometry):
     source: PadStackLayer
     center: Point
     tl: Point
@@ -167,7 +196,7 @@ class MappedPadTrapezoid:
 
 
 @dataclass(frozen=True)
-class MappedPadChamferedRect:
+class MappedPadChamferedRect(MappedGeometry):
     source: PadStackLayer
     center: Point
     tl: Point
