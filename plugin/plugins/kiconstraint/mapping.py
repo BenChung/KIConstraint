@@ -81,6 +81,7 @@ class MappedRectangle:
     right: Line
     bottom: Line
     left: Line
+    constraints: list[Constraint]
 
     @property
     def points(self) -> list[Point]:
@@ -530,12 +531,19 @@ def _map_rectangle(sketch: Sketch, rect: KiRectangle) -> MappedRectangle:
     bottom = sketch.line(br, bl)
     left = sketch.line(bl, tl)
 
+    constraints = [
+        sketch.perpendicular(top, right),
+        sketch.perpendicular(right, bottom),
+        sketch.perpendicular(bottom, left),
+    ]
+
     return MappedRectangle(
         source=rect,
         top_left=tl, top_right=tr,
         bottom_right=br, bottom_left=bl,
         top=top, right=right,
         bottom=bottom, left=left,
+        constraints=constraints,
     )
 
 
