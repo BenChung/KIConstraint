@@ -1,6 +1,12 @@
 """Test action for KiConstraint — verifies the plugin can connect to KiCAD."""
 
 from kipy import KiCad
+from kiconstrint.solver.sketch import (
+    Sketch
+)
+from kiconstraint import (
+    map_shape
+)
 
 
 def main():
@@ -9,6 +15,12 @@ def main():
 
     board = kicad.get_board()
     print(f"Board: {board.name}")
+
+    graphics = board.get_shapes()
+    mapped = []
+    sketch = Sketch()
+    for graphic in graphics:
+        mapped.append(map_shape(sketch, graphic))
 
     tracks = board.get_tracks()
     print(f"Tracks: {len(tracks)}")
