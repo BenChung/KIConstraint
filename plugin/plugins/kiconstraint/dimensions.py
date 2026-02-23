@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -13,7 +14,9 @@ from kipy.board_types import (
 )
 
 from .mapping import MappedGeometry, _to_mm
+from .solver.constraints import Constraint
 from .solver.entities import Line, Point
+from .solver.sketch import Sketch
 
 
 @dataclass(frozen=True)
@@ -131,3 +134,141 @@ def map_dimensions(
         # RadialDimension is skipped — references circles/arcs.
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Suffix constraint language
+# ---------------------------------------------------------------------------
+
+_ALIASES: dict[str, str] = {
+    "par": "p",
+    "perp": "x",
+    "coin": "c",
+    "vert": "v",
+    "horiz": "h",
+    "eq": "e",
+    "mid": "m",
+}
+
+_DISTANCE_RE = re.compile(r"^=(\d+(?:\.\d+)?)mm$")
+_FUNC_RE = re.compile(r"^(\w+)\(([^)]+)\)$")
+_BARE_RE = re.compile(r"^(\w+)$")
+
+# Constraints that require an edge (Line).
+_EDGE_CONSTRAINTS = {"p", "x", "v", "h", "e", "="}
+
+
+def _parse_token(token: str) -> tuple[str, str | float | None]:
+    """Parse a single constraint token into ``(kind, arg)``.
+
+    Returns one of:
+    - ``("=", 3.0)``
+    - ``("p", "other_name")``
+    - ``("v", None)``
+    """
+    token = token.strip()
+    if not token:
+        raise ValueError("empty constraint token")
+
+    m = _DISTANCE_RE.match(token)
+    if m:
+        return ("=", float(m.group(1)))
+
+    m = _FUNC_RE.match(token)
+    if m:
+        name = _ALIASES.get(m.group(1), m.group(1))
+        return (name, m.group(2).strip())
+
+    m = _BARE_RE.match(token)
+    if m:
+        name = _ALIASES.get(m.group(1), m.group(1))
+        return (name, None)
+
+    raise ValueError(f"unrecognized constraint token: {token!r}")
+
+
+def _parse_suffix(suffix: str) -> list[tuple[str, str | float | None]]:
+    """Parse a comma-separated suffix into a list of constraint specs."""
+    if not suffix.strip():
+        return []
+    return [_parse_token(t) for t in suffix.split(",")]
+
+
+def _resolve_edge(name: str, dim_map: DimensionMapping, context: str) -> Line:
+    entry = dim_map.edges.get(name)
+    if entry is None:
+        raise ValueError(f"{context}: edge {name!r} not found in dimension mapping")
+    return entry.line
+
+
+def _resolve_point(name: str, dim_map: DimensionMapping, context: str) -> Point:
+    entry = dim_map.points.get(name)
+    if entry is None:
+        raise ValueError(f"{context}: point {name!r} not found in dimension mapping")
+    return entry.point
+
+
+def apply_dimension_constraints(
+    sketch: Sketch,
+    dim_map: DimensionMapping,
+) -> list[Constraint]:
+    """Parse suffix constraints from mapped dimensions and apply them.
+
+    Returns the list of all :class:`Constraint` objects created.
+    """
+    constraints: list[Constraint] = []
+
+    # Process edge dimensions.
+    for name, entry in dim_map.edges.items():
+        suffix = entry.source.suffix
+        for kind, arg in _parse_suffix(suffix):
+            ctx = f"edge {name!r}"
+            if kind == "=":
+                assert isinstance(arg, float)
+                constraints.append(
+                    sketch.distance(entry.line.p1, entry.line.p2, arg)
+                )
+            elif kind == "p":
+                other = _resolve_edge(arg, dim_map, ctx)
+                constraints.append(sketch.parallel(entry.line, other))
+            elif kind == "x":
+                other = _resolve_edge(arg, dim_map, ctx)
+                constraints.append(sketch.perpendicular(entry.line, other))
+            elif kind == "v":
+                constraints.append(sketch.vertical(entry.line))
+            elif kind == "h":
+                constraints.append(sketch.horizontal(entry.line))
+            elif kind == "e":
+                other = _resolve_edge(arg, dim_map, ctx)
+                constraints.append(sketch.equal(entry.line, other))
+            elif kind == "m":
+                # mid(point_name) → named point is midpoint of this edge.
+                pt = _resolve_point(arg, dim_map, ctx)
+                constraints.append(sketch.midpoint(pt, entry.line))
+            elif kind == "c":
+                raise ValueError(
+                    f"{ctx}: 'coin' is not applicable to edges"
+                )
+            else:
+                raise ValueError(f"{ctx}: unknown constraint {kind!r}")
+
+    # Process point dimensions.
+    for name, entry in dim_map.points.items():
+        suffix = entry.source.suffix
+        for kind, arg in _parse_suffix(suffix):
+            ctx = f"point {name!r}"
+            if kind == "c":
+                pt = _resolve_point(arg, dim_map, ctx)
+                constraints.append(sketch.coincident(entry.point, pt))
+            elif kind == "m":
+                # mid(edge_name) → this point is midpoint of named edge.
+                edge = _resolve_edge(arg, dim_map, ctx)
+                constraints.append(sketch.midpoint(entry.point, edge))
+            elif kind in _EDGE_CONSTRAINTS:
+                raise ValueError(
+                    f"{ctx}: constraint {kind!r} requires an edge, not a point"
+                )
+            else:
+                raise ValueError(f"{ctx}: unknown constraint {kind!r}")
+
+    return constraints

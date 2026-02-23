@@ -2,7 +2,7 @@
 
 from kipy import KiCad
 from kiconstraint.solver import Sketch
-from kiconstraint.dimensions import map_dimensions
+from kiconstraint.dimensions import apply_dimension_constraints, map_dimensions
 from kiconstraint.mapping import map_shape
 
 
@@ -24,6 +24,9 @@ def main():
     dimensions = board.get_dimensions()
     dim_map = map_dimensions(dimensions, mapped)
     print(f"Named {len(dim_map.edges)} edges, {len(dim_map.points)} points")
+
+    dim_constraints = apply_dimension_constraints(sketch, dim_map)
+    print(f"Applied {len(dim_constraints)} dimension constraints")
 
     result = sketch.solve()
     print(f"Solve: ok={result.ok}, dof={result.dof}")
