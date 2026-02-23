@@ -334,50 +334,36 @@ def _map_pad_chamfered_rect(
     v_construction_lines: list[Line] = []
     h_construction_lines: list[Line] = []
 
-    # Build each corner's chamfer
-    chamfer_tl = None
-    if layer.chamfered_corners.top_left:
-        chamfer_tl = _build_chamfer_corner(sketch, tl, chamfer_dist, chamfer_dist)
-        v_construction_lines.append(chamfer_tl.v_construction)
-        h_construction_lines.append(chamfer_tl.h_construction)
-        constraints.append(sketch.equal(chamfer_tl.v_construction,
-                                        chamfer_tl.h_construction))
-        tl_t, tl_l = chamfer_tl.p_h, chamfer_tl.p_v
-    else:
-        tl_t = tl_l = tl
+    # Build each corner's chamfer.  Each entry is
+    # (base_point, is_chamfered, h_sign, v_sign).
+    corners = layer.chamfered_corners
+    corner_specs = [
+        (tl, corners.top_left,     1,  1),
+        (tr, corners.top_right,   -1,  1),
+        (bl, corners.bottom_left,  1, -1),
+        (br, corners.bottom_right,-1, -1),
+    ]
+    chamfers: list[ChamferCorner | None] = []
+    edge_h: list[Point] = []   # point along horizontal edge per corner
+    edge_v: list[Point] = []   # point along vertical edge per corner
 
-    chamfer_tr = None
-    if layer.chamfered_corners.top_right:
-        chamfer_tr = _build_chamfer_corner(sketch, tr, -chamfer_dist, chamfer_dist)
-        v_construction_lines.append(chamfer_tr.v_construction)
-        h_construction_lines.append(chamfer_tr.h_construction)
-        constraints.append(sketch.equal(chamfer_tr.v_construction,
-                                        chamfer_tr.h_construction))
-        tr_t, tr_r = chamfer_tr.p_h, chamfer_tr.p_v
-    else:
-        tr_t = tr_r = tr
+    for pt, is_chamfered, h_sign, v_sign in corner_specs:
+        if is_chamfered:
+            c = _build_chamfer_corner(
+                sketch, pt, h_sign * chamfer_dist, v_sign * chamfer_dist,
+            )
+            v_construction_lines.append(c.v_construction)
+            h_construction_lines.append(c.h_construction)
+            constraints.append(sketch.equal(c.v_construction, c.h_construction))
+            chamfers.append(c)
+            edge_h.append(c.p_h)
+            edge_v.append(c.p_v)
+        else:
+            chamfers.append(None)
+            edge_h.append(pt)
+            edge_v.append(pt)
 
-    chamfer_bl = None
-    if layer.chamfered_corners.bottom_left:
-        chamfer_bl = _build_chamfer_corner(sketch, bl, chamfer_dist, -chamfer_dist)
-        v_construction_lines.append(chamfer_bl.v_construction)
-        h_construction_lines.append(chamfer_bl.h_construction)
-        constraints.append(sketch.equal(chamfer_bl.v_construction,
-                                        chamfer_bl.h_construction))
-        bl_b, bl_l = chamfer_bl.p_h, chamfer_bl.p_v
-    else:
-        bl_b = bl_l = bl
-
-    chamfer_br = None
-    if layer.chamfered_corners.bottom_right:
-        chamfer_br = _build_chamfer_corner(sketch, br, -chamfer_dist, -chamfer_dist)
-        v_construction_lines.append(chamfer_br.v_construction)
-        h_construction_lines.append(chamfer_br.h_construction)
-        constraints.append(sketch.equal(chamfer_br.v_construction,
-                                        chamfer_br.h_construction))
-        br_b, br_r = chamfer_br.p_h, chamfer_br.p_v
-    else:
-        br_b = br_r = br
+    chamfer_tl, chamfer_tr, chamfer_bl, chamfer_br = chamfers
 
     # Make all chamfers the same length
     for i in range(1, len(v_construction_lines)):
@@ -385,10 +371,11 @@ def _map_pad_chamfered_rect(
                                         v_construction_lines[i - 1]))
 
     # Edge lines connecting chamfer endpoints
-    top = sketch.line(tr_t, tl_t)
-    left = sketch.line(tl_l, bl_l)
-    right = sketch.line(tr_r, br_r)
-    bottom = sketch.line(bl_b, br_b)
+    # indices: tl=0, tr=1, bl=2, br=3
+    top = sketch.line(edge_h[1], edge_h[0])
+    left = sketch.line(edge_v[0], edge_v[2])
+    right = sketch.line(edge_v[1], edge_v[3])
+    bottom = sketch.line(edge_h[2], edge_h[3])
 
     # Midpoints and construction lines for centering
     tm = sketch.point(_to_mm(x), _to_mm(y - half_size.y))
