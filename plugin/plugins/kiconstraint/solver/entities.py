@@ -22,6 +22,9 @@ class Entity:
     def _param(self, index: int) -> float:
         return slvs.get_param_value(self._raw["param"][index])
 
+    def _set_param(self, index: int, value: float) -> None:
+        slvs.set_param_value(self._raw["param"][index], value)
+
 
 class Point(Entity):
     """2D or 3D point."""
@@ -33,6 +36,11 @@ class Point(Entity):
     @property
     def v(self) -> float:
         return self._param(1)
+
+    def move(self, u: float, v: float) -> None:
+        """Set this point's 2D position."""
+        self._set_param(0, u)
+        self._set_param(1, v)
 
     # 3D aliases
     @property

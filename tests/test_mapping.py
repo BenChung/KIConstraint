@@ -1,7 +1,6 @@
 import math
 
 import pytest
-import slvs
 from kipy.common_types import Polygon
 from kipy.proto.common.types import base_types_pb2
 
@@ -232,13 +231,6 @@ def _edge_len(p1, p2):
     return math.hypot(dx, dy)
 
 
-def _move_point(pt, u, v):
-    """Move a solver Point to (u, v) by writing its parameters directly."""
-    params = pt._raw["param"]
-    slvs.set_param_value(params[0], u)
-    slvs.set_param_value(params[1], v)
-
-
 def _assert_perpendicular(p1, p2, p3, p4, tol=1e-6):
     """Assert the edge p1→p2 is perpendicular to p3→p4."""
     ax, ay = _edge_vec(p1, p2)
@@ -296,7 +288,7 @@ class TestRectangleConstraints:
         m = map_shape(sketch, rect)
 
         # Perturb top-left by shifting it and pinning it
-        _move_point(m.top_left, 1.0, 1.0)
+        m.top_left.move(1.0, 1.0)
         sketch.dragged(m.top_left)
         result = sketch.solve()
         assert result.ok
@@ -313,7 +305,7 @@ class TestRectangleConstraints:
         rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
         m = map_shape(sketch, rect)
 
-        _move_point(m.bottom_right, 20.0, 15.0)
+        m.bottom_right.move(20.0, 15.0)
         sketch.dragged(m.bottom_right)
         result = sketch.solve()
         assert result.ok
@@ -330,7 +322,7 @@ class TestRectangleConstraints:
         rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
         m = map_shape(sketch, rect)
 
-        _move_point(m.top_left, 2.0, -1.0)
+        m.top_left.move(2.0, -1.0)
         sketch.dragged(m.top_left)
         result = sketch.solve()
         assert result.ok
