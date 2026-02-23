@@ -11,6 +11,11 @@ from kipy.common_types import (
     Rectangle as KiRectangle,
     Segment as KiSegment,
 )
+from kipy.board_types import (
+    Pad,
+    PadStack,
+    PadStackShape
+)
 
 from .solver.entities import Arc, Circle, Cubic, Line, Point
 from .solver.sketch import Sketch
@@ -92,6 +97,180 @@ class MappedBezier:
     @property
     def points(self) -> list[Point]:
         return [self.start, self.control1, self.control2, self.end]
+
+@dataclass(frozen=True)
+class MappedPad:
+    source: Pad
+    pad_stack: PadStack
+
+    position: Point
+    mapped_geometry
+    constraints
+
+def map_pad(sketch: Sketch, shape: Pad) -> MappedPad:
+    """Map a KiCad Pad into solver entities within sketch"""
+    geom = []
+    cstrs = []
+    center = sketch.point(_to_mm(shape.position.x), _to_mm(shape.position.y))
+    for layer in shape.copper_layers:
+        if layer.shape == PadStackShape.PSS_UNKNOWN or layer.shape == PSS_OVAL:
+            # not supported
+        else if layer.shape == PadStackShape.PSS_CIRCLE or (layer.shape == PadStackShape.PSS_CUSTOM and layer.custom_anchor_shape == PadStackShape.PSS_CIRCLE):
+            sketch.circle(center, _to_mm(layer.size.x))
+        else if layer.shape == PadStackShape.PSS_RECTANGLE or layer.shape == PadStackShape.PSS_ROUNDRECT or \
+            (layer.shape == PadStackShape.PSS_CUSTOM and layer.custom_anchor_shape == PSS_RECTANGLE):
+            # define a rectangle centered at center by adding a line, defining its midpoint as the center
+            # then build the rectangle from that
+            half_size = layer.size/2
+            x = shape.position.x
+            y = shape.position.y
+            tl = sketch.point(_to_mm(x - half_size.x), _to_mm(y - half_size.y))
+            tr = sketch.point(_to_mm(x + half_size.x), _to_mm(y - half_size.y))
+            br = sketch.point(_to_mm(x + half_size.x), _to_mm(y + half_size.y))
+            bl = sketch.point(_to_mm(x - half_size.x), _to_mm(y + half_size.y))
+            construction = sketch.line(tl, br)
+            top = sketch.line(tl, tr)
+            bottom = sketch.line(bl, br)
+            left = sketch.line(tl, bl)
+            right = sketch.line(tr, br)
+            cstrs.push(sketch.midpoint(center, construction))
+            cstrs.push(sketch.perpendicular(top, left))
+            cstrs.push(sketch.perpendicular(bottom, right))
+            cstrs.push(sketch.perpendicular(left, bottom))
+        else if layer.shape == PadStackShape.PSS_TRAPEZOID:
+            trap_delta = layer.trap_delta / 2
+            half_size = layer.size/2
+            x = shape.position.x
+            y = shape.position.y
+            tl = sketch.point(_to_mm(x - half_size.x - trap_delta.y), _to_mm(y - half_size.y + trap_delta.x))
+            tr = sketch.point(_to_mm(x + half_size.x + trap_delta.y), _to_mm(y - half_size.y - trap_delta.x))
+            br = sketch.point(_to_mm(x + half_size.x - trap_delta.y), _to_mm(y + half_size.y + trap_delta.x))
+            bl = sketch.point(_to_mm(x - half_size.x + trap_delta.y), _to_mm(y + half_size.y - trap_delta.x))
+            top = sketch.line(tl, tr)
+            bottom = sketch.line(bl, br)
+            left = sketch.line(tl, bl)
+            right = sketch.line(tr, br)
+            if trap_delta.x != 0.0:
+                # the trapezoid is skewed in the vertical axis
+                mpl = sketch.point(_to_mm(x - half_size.x), _to_mm(y))
+                mpr = sketch.point(_to_mm(x + half_size.x), _to_mm(y))
+                construction = sketch.line(mpl, mpr)
+                cstrs.push(sketch.midpoint(mpl, left))
+                cstrs.push(sketch.midpoint(mpr, right))
+                cstrs.push(sketch.perpendicular(construction, left))
+                cstrs.push(sketch.midpoint(center, construction))
+                cstrs.push(sketch.parallel(left, right))
+                cstrs.push(sketch.equal(top, bottom))
+            else:
+                # the trapezoid is skewed in the horizontal axis
+                mpt = sketch.point(_to_mm(x), _to_mm(y - half_size.y))
+                mpb = sketch.point(_to_mm(x), _to_mm(y + half_size.y))
+                construction = sketch.line(mpt, mpb)
+
+                cstrs.push(sketch.midpoint(mpt, top))
+                cstrs.push(sketch.midpoint(mpb, bottom))
+                cstrs.push(sketch.perpendicular(construction, top))
+                cstrs.push(sketch.midpoint(center, construction))
+                cstrs.push(sketch.parallel(top, bottom))
+                cstrs.push(sketch.equal(left, right))
+        else if layer.shape == PadStackShape.PSS_CHAMFEREDRECT:
+            corner_chamfer_fraction = layer.chamfer_ratio
+            corner_chamfer_dist = min(layer.size.x, layer.size.y) * corner_chamfer_fraction
+            half_size = layer.size/2
+            x = shape.position.x
+            y = shape.position.y
+            tl = sketch.point(_to_mm(x - half_size.x), _to_mm(y - half_size.y))
+            tr = sketch.point(_to_mm(x + half_size.x), _to_mm(y - half_size.y))
+            br = sketch.point(_to_mm(x + half_size.x), _to_mm(y + half_size.y))
+            bl = sketch.point(_to_mm(x - half_size.x), _to_mm(y + half_size.y))
+
+            # build the corners
+            vertical_construction_lines = []
+            horizontal_construction_lines = []
+            def build_chamfer(pt, adj_h, adj_v):
+                p_h = sketch.point(_to_mm(x - half_size.x + adj_h), _to_mm(y - half_size.y))
+                p_v = sketch.point(_to_mm(x - half_size.x), _to_mm(y - half_size.y + adj_v))
+                chamfer = sketch.line(p_h, p_v)
+                vcstr = sketch.line(pt, p_v)
+                hcstr = sketch.line(pt, p_h)
+                vertical_construction_lines.push(vcstr)
+                horizontal_construction_lines.push(hcstr)
+                cstrs.push(sketch.equal(vcstr, hcstr))
+                return p_h, p_v
+
+            tl_t = None
+            tl_l = None
+            if layer.chamfered_corners.top_left:
+                tl_t, tl_l = build_chamfer(tl, corner_chamfer_dist, corner_chamfer_dist)
+            else:
+                tl_t = tl_l = tl
+            
+            tr_t = None
+            tr_l = None
+            if layer.chamfered_corners.top_left:
+                tr_t, tr_l = build_chamfer(tr, -corner_chamfer_dist, corner_chamfer_dist)
+            else:
+                tr_t = tr_l = tr
+
+            bl_l = None
+            bl_b = None
+            if layer.chamfered_corners.bottom_left:
+                bl_b, bl_l = build_chamfer(bl, corner_chamfer_dist, -corner_chamfer_dist)
+            else:
+                bl_b = bl_l = bl
+
+            br_r = None
+            br_b = None
+            if layer.chamfered_corners.bottom_right:
+                br_b, br_r = build_chamfer(br, -corner_chamfer_dist, -corner_chamfer_dist)
+            else:
+                br_b = br_r = br
+            
+            if len(vertical_construction_lines) > 1:
+                # make all the chamfers the same length
+                for li in range(1, len(vertical_construction_lines)):
+                    l = vertical_construction_lines[li]
+                    ll = vertical_construction_lines[li-1]
+                    cstrs.push(sketch.equal(l, li))
+            top = sketch.line(tr_t, tl_t)
+            left = sketch.line(tl_l, bl_l)
+            right = sketch.line(tr_r, br_r)
+            bottom = sketch.line(bl_l, br_r)
+
+            
+            tm = sketch.point(_to_mm(x), _to_mm(y - half_size.y))
+            cstrs.push(sketch.midpoint(tm, top))
+            
+            lm = sketch.point(_to_mm(x - half_size.x), _to_mm(y))
+            cstrs.push(sketch.midpoint(lm, left))
+            
+            rm = sketch.point(_to_mm(x + half_size.x), _to_mm(y))
+            cstrs.push(sketch.midpoint(rm, right))
+            
+            bm = sketch.point(_to_mm(x), _to_mm(y + half_size.y))
+            cstrs.push(sketch.midpoint(bm, bottom))
+            
+            construction_v = sketch.line(tm, bm)
+            construction_h = sketch.line(lm, rm)
+            cstrs.push(sketch.midpoint(center, construction_v))
+            cstrs.push(sketch.midpoint(center, construction_h))
+            cstrs.push(sketch.perpendicular(construction_h, construction_v))
+            cstrs.push(sketch.parallel(construction_h, bottom))
+            cstrs.push(sketch.parallel(construction_h, top))
+            cstrs.push(sketch.parallel(construction_v, left))
+            cstrs.push(sketch.parallel(construction_v, right))
+            for l in vertical_construction_lines:
+                cstrs.push(sketch.parallel(construction_v, l))
+            for l in horizontal_construction_lines:
+                cstrs.push(sketch.parallel(construction_h, l))
+
+
+    return MappedPad(
+        source=shape.pad, 
+        pad_stack=shape.pad_stack,
+        position=center,
+        mapped_geometry=geom)
+        
 
 
 MappedShape = Union[MappedSegment, MappedArc, MappedCircle, MappedRectangle, MappedBezier]
