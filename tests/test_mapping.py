@@ -1,6 +1,7 @@
 import math
 
 import pytest
+import slvs
 from kipy.common_types import Polygon
 from kipy.proto.common.types import base_types_pb2
 
@@ -212,3 +213,162 @@ def test_map_unsupported():
     polygon = Polygon(proto)
     with pytest.raises(TypeError, match="Unsupported shape type"):
         map_shape(sketch, polygon)
+
+
+# -- helpers for geometric checks -------------------------------------------
+
+def _dot(ux, uy, vx, vy):
+    """Dot product of two 2D vectors."""
+    return ux * vx + uy * vy
+
+
+def _edge_vec(p1, p2):
+    """Return the (dx, dy) vector from p1 to p2."""
+    return (p2.u - p1.u, p2.v - p1.v)
+
+
+def _edge_len(p1, p2):
+    dx, dy = _edge_vec(p1, p2)
+    return math.hypot(dx, dy)
+
+
+def _move_point(pt, u, v):
+    """Move a solver Point to (u, v) by writing its parameters directly."""
+    params = pt._raw["param"]
+    slvs.set_param_value(params[0], u)
+    slvs.set_param_value(params[1], v)
+
+
+def _assert_perpendicular(p1, p2, p3, p4, tol=1e-6):
+    """Assert the edge p1→p2 is perpendicular to p3→p4."""
+    ax, ay = _edge_vec(p1, p2)
+    bx, by = _edge_vec(p3, p4)
+    assert _dot(ax, ay, bx, by) == pytest.approx(0.0, abs=tol)
+
+
+def _assert_parallel(p1, p2, p3, p4, tol=1e-6):
+    """Assert the edge p1→p2 is parallel to p3→p4 (cross product ≈ 0)."""
+    ax, ay = _edge_vec(p1, p2)
+    bx, by = _edge_vec(p3, p4)
+    cross = ax * by - ay * bx
+    assert cross == pytest.approx(0.0, abs=tol)
+
+
+# -- constraint enforcement tests -------------------------------------------
+
+
+class TestRectangleConstraints:
+    """Verify rectangle constraints enforce perpendicularity."""
+
+    def test_rectangle_has_constraints(self):
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+        assert len(m.constraints) == 3
+
+    def test_rectangle_perpendicular_after_solve(self):
+        """All four corners should be right angles after solving."""
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+        sketch.solve()
+
+        tl, tr, br, bl = m.top_left, m.top_right, m.bottom_right, m.bottom_left
+        _assert_perpendicular(tl, tr, tl, bl)  # top ⊥ left
+        _assert_perpendicular(tr, tl, tr, br)  # top ⊥ right
+        _assert_perpendicular(br, tr, br, bl)  # right ⊥ bottom
+        _assert_perpendicular(bl, tl, bl, br)  # left ⊥ bottom
+
+    def test_rectangle_parallel_opposite_sides(self):
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+        sketch.solve()
+
+        tl, tr, br, bl = m.top_left, m.top_right, m.bottom_right, m.bottom_left
+        _assert_parallel(tl, tr, bl, br)   # top ∥ bottom
+        _assert_parallel(tl, bl, tr, br)   # left ∥ right
+
+    def test_rectangle_stays_rectangular_after_perturbation(self):
+        """Move one corner and re-solve; shape must remain rectangular."""
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+
+        # Perturb top-left by shifting it and pinning it
+        _move_point(m.top_left, 1.0, 1.0)
+        sketch.dragged(m.top_left)
+        result = sketch.solve()
+        assert result.ok
+
+        tl, tr, br, bl = m.top_left, m.top_right, m.bottom_right, m.bottom_left
+        _assert_perpendicular(tl, tr, tl, bl)
+        _assert_perpendicular(tr, tl, tr, br)
+        _assert_perpendicular(br, tr, br, bl)
+        _assert_perpendicular(bl, tl, bl, br)
+
+    def test_rectangle_stays_rectangular_large_perturbation(self):
+        """Large perturbation: move a corner far from original position."""
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+
+        _move_point(m.bottom_right, 20.0, 15.0)
+        sketch.dragged(m.bottom_right)
+        result = sketch.solve()
+        assert result.ok
+
+        tl, tr, br, bl = m.top_left, m.top_right, m.bottom_right, m.bottom_left
+        _assert_perpendicular(tl, tr, tl, bl)
+        _assert_perpendicular(tr, tl, tr, br)
+        _assert_perpendicular(br, tr, br, bl)
+        _assert_perpendicular(bl, tl, bl, br)
+
+    def test_rectangle_equal_opposite_sides_after_perturbation(self):
+        """After perturbation, opposite sides should still be equal length."""
+        sketch = Sketch()
+        rect = _make_rectangle(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, rect)
+
+        _move_point(m.top_left, 2.0, -1.0)
+        sketch.dragged(m.top_left)
+        result = sketch.solve()
+        assert result.ok
+
+        tl, tr, br, bl = m.top_left, m.top_right, m.bottom_right, m.bottom_left
+        top_len = _edge_len(tl, tr)
+        bottom_len = _edge_len(bl, br)
+        left_len = _edge_len(tl, bl)
+        right_len = _edge_len(tr, br)
+        assert top_len == pytest.approx(bottom_len, rel=1e-4)
+        assert left_len == pytest.approx(right_len, rel=1e-4)
+
+
+class TestNoConstraintShapes:
+    """Shapes without constraints should have empty constraint lists."""
+
+    def test_segment_no_constraints(self):
+        sketch = Sketch()
+        seg = _make_segment(0, 0, 10 * NM, 5 * NM)
+        m = map_shape(sketch, seg)
+        assert m.constraints == []
+
+    def test_arc_no_constraints(self):
+        r = 10 * NM
+        mid_v = int(r * math.cos(math.pi / 4))
+        sketch = Sketch()
+        arc = _make_arc(r, 0, mid_v, mid_v, 0, r)
+        m = map_shape(sketch, arc)
+        assert m.constraints == []
+
+    def test_circle_no_constraints(self):
+        sketch = Sketch()
+        circ = _make_circle(5 * NM, 5 * NM, 10 * NM, 5 * NM)
+        m = map_shape(sketch, circ)
+        assert m.constraints == []
+
+    def test_bezier_no_constraints(self):
+        sketch = Sketch()
+        bez = _make_bezier(0, 0, 3 * NM, 10 * NM, 7 * NM, 10 * NM, 10 * NM, 0)
+        m = map_shape(sketch, bez)
+        assert m.constraints == []
