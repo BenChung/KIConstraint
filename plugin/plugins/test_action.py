@@ -2,6 +2,7 @@
 
 from kipy import KiCad
 from kiconstraint.solver import Sketch
+from kiconstraint.dimensions import map_dimensions
 from kiconstraint.mapping import map_shape
 
 
@@ -19,6 +20,10 @@ def main():
     for graphic in graphics:
         mapped.append(map_shape(sketch, graphic))
     print(f"Mapped {len(mapped)} board shapes")
+
+    dimensions = board.get_dimensions()
+    dim_map = map_dimensions(dimensions, mapped)
+    print(f"Named {len(dim_map.edges)} edges, {len(dim_map.points)} points")
 
     result = sketch.solve()
     print(f"Solve: ok={result.ok}, dof={result.dof}")

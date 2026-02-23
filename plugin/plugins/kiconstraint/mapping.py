@@ -48,6 +48,10 @@ class MappedGeometry(ABC):
     @abstractmethod
     def points(self) -> list[Point]: ...
 
+    @property
+    @abstractmethod
+    def lines(self) -> list[Line]: ...
+
     # ``constraints`` is a dataclass field on every concrete subclass
     # rather than an abstract property, because @property descriptors
     # on a base class shadow dataclass fields of the same name.
@@ -71,6 +75,10 @@ class MappedSegment(MappedGeometry):
     def points(self) -> list[Point]:
         return [self.start, self.end]
 
+    @property
+    def lines(self) -> list[Line]:
+        return [self.line]
+
 
 @dataclass(frozen=True)
 class MappedArc(MappedGeometry):
@@ -85,6 +93,10 @@ class MappedArc(MappedGeometry):
     def points(self) -> list[Point]:
         return [self.center, self.start, self.end]
 
+    @property
+    def lines(self) -> list[Line]:
+        return []
+
 
 @dataclass(frozen=True)
 class MappedCircle(MappedGeometry):
@@ -96,6 +108,10 @@ class MappedCircle(MappedGeometry):
     @property
     def points(self) -> list[Point]:
         return [self.center]
+
+    @property
+    def lines(self) -> list[Line]:
+        return []
 
 
 @dataclass(frozen=True)
@@ -115,6 +131,10 @@ class MappedRectangle(MappedGeometry):
     def points(self) -> list[Point]:
         return [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
 
+    @property
+    def lines(self) -> list[Line]:
+        return [self.top, self.right, self.bottom, self.left]
+
 
 @dataclass(frozen=True)
 class MappedBezier(MappedGeometry):
@@ -129,6 +149,10 @@ class MappedBezier(MappedGeometry):
     @property
     def points(self) -> list[Point]:
         return [self.start, self.control1, self.control2, self.end]
+
+    @property
+    def lines(self) -> list[Line]:
+        return []
 
 @dataclass(frozen=True)
 class ChamferCorner:
@@ -151,6 +175,10 @@ class MappedPadCircle(MappedGeometry):
     def points(self) -> list[Point]:
         return [self.center]
 
+    @property
+    def lines(self) -> list[Line]:
+        return []
+
 
 @dataclass(frozen=True)
 class MappedPadRectangle(MappedGeometry):
@@ -170,6 +198,10 @@ class MappedPadRectangle(MappedGeometry):
     @property
     def points(self) -> list[Point]:
         return [self.center, self.tl, self.tr, self.br, self.bl]
+
+    @property
+    def lines(self) -> list[Line]:
+        return [self.top, self.right, self.bottom, self.left]
 
 
 @dataclass(frozen=True)
@@ -193,6 +225,10 @@ class MappedPadTrapezoid(MappedGeometry):
     def points(self) -> list[Point]:
         return [self.center, self.tl, self.tr, self.br, self.bl,
                 self.midpoint_a, self.midpoint_b]
+
+    @property
+    def lines(self) -> list[Line]:
+        return [self.top, self.right, self.bottom, self.left]
 
 
 @dataclass(frozen=True)
@@ -229,6 +265,15 @@ class MappedPadChamferedRect(MappedGeometry):
             if chamfer is not None:
                 pts.extend([chamfer.p_h, chamfer.p_v])
         return pts
+
+    @property
+    def lines(self) -> list[Line]:
+        result = [self.top, self.right, self.bottom, self.left]
+        for chamfer in (self.chamfer_tl, self.chamfer_tr,
+                        self.chamfer_bl, self.chamfer_br):
+            if chamfer is not None:
+                result.append(chamfer.chamfer)
+        return result
 
 
 MappedPadLayer = Union[
