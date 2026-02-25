@@ -13,7 +13,7 @@ from kipy.board_types import (
     OrthogonalDimension,
 )
 
-from .mapping import MappedGeometry, _to_mm
+from .mapping import MappedGeometry, _to_mm, _v2
 from .solver.constraints import Constraint
 from .solver.entities import Line, Point
 from .solver.sketch import Sketch
@@ -24,6 +24,12 @@ class MappedEdgeDimension:
     source: Dimension
     name: str
     line: Line
+    constraints: str
+
+    def map_back(self):
+        self.source.start = _v2(self.line.p1)
+        self.source.end = _v2(self.line.p2)
+        return self.source
 
 
 @dataclass(frozen=True)
@@ -31,12 +37,25 @@ class MappedPointDimension:
     source: Dimension
     name: str
     point: Point
+    constraints: str
+
+    def map_back(self):
+        self.source.start = _v2(self.point)
+        return self.source
 
 
 @dataclass
 class DimensionMapping:
     edges: dict[str, MappedEdgeDimension] = field(default_factory=dict)
     points: dict[str, MappedPointDimension] = field(default_factory=dict)
+
+    def map_back(self):
+        modified = []
+        for edge_dim in self.edges.values():
+            modified.append(edge_dim.map_back())
+        for point_dim in self.points.values():
+            modified.append(point_dim.map_back())
+        return modified
 
 
 def _find_point(
@@ -49,7 +68,10 @@ def _find_point(
 
 
 def _extract_name(dim: Dimension) -> str | None:
-    prefix = dim.prefix
+    if isinstance(dim, LeaderDimension):
+        return dim.override_text.split(",")[0]
+    else:
+        prefix = dim.prefix
     if prefix.endswith(":"):
         return prefix[:-1].strip()
     return None
@@ -96,31 +118,32 @@ def map_dimensions(
                 line = edge_index.get(key)
                 if line is not None:
                     result.edges[name] = MappedEdgeDimension(
-                        source=dim, name=name, line=line,
+                        source=dim, name=name, line=line, constraints=dim.suffix
                     )
                     continue
                 # No connecting line — fall through to individual points.
                 result.points[name + ":start"] = MappedPointDimension(
-                    source=dim, name=name + ":start", point=p_start,
+                    source=dim, name=name + ":start", point=p_start, constraints=""
                 )
                 result.points[name + ":end"] = MappedPointDimension(
-                    source=dim, name=name + ":end", point=p_end,
+                    source=dim, name=name + ":end", point=p_end, constraints=""
                 )
             elif p_start is not None:
                 result.points[name + ":start"] = MappedPointDimension(
-                    source=dim, name=name + ":start", point=p_start,
+                    source=dim, name=name + ":start", point=p_start, constraints=""
                 )
             elif p_end is not None:
                 result.points[name + ":end"] = MappedPointDimension(
-                    source=dim, name=name + ":end", point=p_end,
+                    source=dim, name=name + ":end", point=p_end, constraints=""
                 )
 
         elif isinstance(dim, LeaderDimension):
             start_mm = (_to_mm(dim.start.x), _to_mm(dim.start.y))
             pt = _find_point(*start_mm, all_points, tolerance)
             if pt is not None:
+                split_text = dim.override_text.split(",", 1)
                 result.points[name] = MappedPointDimension(
-                    source=dim, name=name, point=pt,
+                    source=dim, name=name, point=pt, constraints=split_text[1] if len(split_text) > 1 else ""
                 )
 
         elif isinstance(dim, CenterDimension):
@@ -128,7 +151,7 @@ def map_dimensions(
             pt = _find_point(*center_mm, all_points, tolerance)
             if pt is not None:
                 result.points[name] = MappedPointDimension(
-                    source=dim, name=name, point=pt,
+                    source=dim, name=name, point=pt, constraints=""
                 )
 
         # RadialDimension is skipped — references circles/arcs.
@@ -342,11 +365,11 @@ def apply_dimension_constraints(
     constraints: list[Constraint] = []
 
     for entry in dim_map.edges.values():
-        for spec in parse_suffix(entry.source.suffix):
+        for spec in parse_suffix(entry.constraints):
             constraints.append(spec.apply_to_edge(sketch, entry, dim_map))
 
     for entry in dim_map.points.values():
-        for spec in parse_suffix(entry.source.suffix):
+        for spec in parse_suffix(entry.constraints):
             constraints.append(spec.apply_to_point(sketch, entry, dim_map))
 
     return constraints

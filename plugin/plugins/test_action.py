@@ -4,6 +4,7 @@ from kipy import KiCad
 from kiconstraint.solver import Sketch
 from kiconstraint.dimensions import apply_dimension_constraints, map_dimensions
 from kiconstraint.mapping import map_shape, write_back_shapes
+from kipy.proto.common.types import KiCadObjectType
 
 
 def main():
@@ -21,7 +22,11 @@ def main():
         mapped.append(map_shape(sketch, graphic))
     print(f"Mapped {len(mapped)} board shapes")
 
+    items = board.get_items(types=[KiCadObjectType.KOT_PCB_DIMENSION])
+    print(f"Found {len(items)} items")
+    
     dimensions = board.get_dimensions()
+    print(f"Found {len(dimensions)} dimensions")
     dim_map = map_dimensions(dimensions, mapped)
     print(f"Named {len(dim_map.edges)} edges, {len(dim_map.points)} points")
 
@@ -34,6 +39,8 @@ def main():
     if result.ok:
         modified = write_back_shapes(mapped, result)
         board.update_items(modified)
+        mod_dims = dim_map.map_back()
+        board.update_items(mod_dims)
         print(f"Wrote back {len(modified)} shapes")
     else:
         print("Solve failed — skipping write-back")
