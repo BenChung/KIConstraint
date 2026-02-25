@@ -27,7 +27,7 @@ def main():
     
     dimensions = board.get_dimensions()
     print(f"Found {len(dimensions)} dimensions")
-    dim_map = map_dimensions(dimensions, mapped)
+    dim_map = map_dimensions(sketch, dimensions, mapped)
     print(f"Named {len(dim_map.edges)} edges, {len(dim_map.points)} points")
 
     dim_constraints = apply_dimension_constraints(sketch, dim_map)
@@ -38,9 +38,8 @@ def main():
 
     if result.ok:
         modified = write_back_shapes(mapped, result)
-        board.update_items(modified)
         mod_dims = dim_map.map_back()
-        board.update_items(mod_dims)
+        board.update_items(modified + mod_dims)
         print(f"Wrote back {len(modified)} shapes")
     else:
         print("Solve failed — skipping write-back")

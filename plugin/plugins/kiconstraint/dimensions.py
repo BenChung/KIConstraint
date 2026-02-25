@@ -40,7 +40,11 @@ class MappedPointDimension:
     constraints: str
 
     def map_back(self):
+        original_offset = self.source.end - self.source.start
+        original_text_offset = self.source.text.position - self.source.start
         self.source.start = _v2(self.point)
+        self.source.end = self.source.start + original_offset
+        self.source.text.position = self.source.start + original_text_offset
         return self.source
 
 
@@ -78,6 +82,7 @@ def _extract_name(dim: Dimension) -> str | None:
 
 
 def map_dimensions(
+    sketch: Sketch,
     dimensions: Sequence[Dimension],
     mapped: Sequence[MappedGeometry],
     tolerance: float = 1e-4,
@@ -101,6 +106,14 @@ def map_dimensions(
             edge_index[key] = line
 
     result = DimensionMapping()
+
+    for dim in dimensions:
+        if isinstance(dim, CenterDimension):
+            # add the point corresponding to the center
+            pt = sketch.point(_to_mm(dim.center.x), _to_mm(dim.center.y))
+            # lock its position
+            sketch.dragged(pt)
+            all_points.append(pt)
 
     for dim in dimensions:
         name = _extract_name(dim)
@@ -144,14 +157,6 @@ def map_dimensions(
                 split_text = dim.override_text.split(",", 1)
                 result.points[name] = MappedPointDimension(
                     source=dim, name=name, point=pt, constraints=split_text[1] if len(split_text) > 1 else ""
-                )
-
-        elif isinstance(dim, CenterDimension):
-            center_mm = (_to_mm(dim.center.x), _to_mm(dim.center.y))
-            pt = _find_point(*center_mm, all_points, tolerance)
-            if pt is not None:
-                result.points[name] = MappedPointDimension(
-                    source=dim, name=name, point=pt, constraints=""
                 )
 
         # RadialDimension is skipped — references circles/arcs.
