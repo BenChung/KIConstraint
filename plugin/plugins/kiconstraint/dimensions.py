@@ -55,7 +55,8 @@ class MappedPointDimension:
 class DimensionMapping:
     edges: dict[str, MappedEdgeDimension] = field(default_factory=dict)
     points: dict[str, MappedPointDimension] = field(default_factory=dict)
-    extra_points: list[Point] = field(default_factory=list)
+    all_points: list[Point] = field(default_factory=list)
+    edge_index: dict[frozenset[int], Line] = field(default_factory=dict)
 
     def map_back(self):
         modified = []
@@ -138,7 +139,7 @@ def map_dimensions(
     read directly from dimensions in pass 2.
     """
     all_points, edge_index = _build_lookup(mapped)
-    result = DimensionMapping()
+    result = DimensionMapping(all_points=all_points, edge_index=edge_index)
 
     # First pass: add CenterDimension reference points.
     for dim in dimensions:
@@ -146,7 +147,6 @@ def map_dimensions(
             pt = sketch.point(_to_mm(dim.center.x), _to_mm(dim.center.y))
             sketch.dragged(pt)
             all_points.append(pt)
-            result.extra_points.append(pt)
 
     # Second pass: associate named dimensions with entities.
     for dim in dimensions:
@@ -372,7 +372,6 @@ def apply_dimension_constraints(
     sketch: Sketch,
     dimensions: Sequence[Dimension],
     dim_map: DimensionMapping,
-    mapped: Sequence[MappedGeometry],
     tolerance: float = 1e-4,
 ) -> list[Constraint]:
     """Parse and apply constraints from all dimensions.
@@ -380,12 +379,13 @@ def apply_dimension_constraints(
     Unlike :func:`map_dimensions` (pass 1), this processes **all** dimensions
     regardless of whether they are named.  Constraint text comes from each
     dimension's suffix (or ``override_text`` for LeaderDimension).  The
-    *dim_map* registry (from pass 1) is used only for resolving
-    cross-references like ``par(other_edge)``.
+    *dim_map* registry (from pass 1) is used for resolving cross-references
+    like ``par(other_edge)`` and for the point/edge lookup built during pass 1.
 
     Returns the list of all :class:`Constraint` objects created.
     """
-    all_points, edge_index = _build_lookup(mapped, dim_map.extra_points)
+    all_points = dim_map.all_points
+    edge_index = dim_map.edge_index
     constraints: list[Constraint] = []
 
     for dim in dimensions:
