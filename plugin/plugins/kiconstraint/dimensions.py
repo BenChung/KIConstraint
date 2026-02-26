@@ -106,6 +106,7 @@ def map_dimensions(
             edge_index[key] = line
 
     result = DimensionMapping()
+    constraints = []
 
     for dim in dimensions:
         if isinstance(dim, CenterDimension):
@@ -190,10 +191,10 @@ class ConstraintSpec:
         raise ValueError(f"{ctx}: constraint {type(self).__name__} requires a point, not an edge")
 
 @dataclass(frozen=True)
-class Distance(ConstraintSpec):
+class Length(ConstraintSpec):
     value_mm: float
     def apply_to_edge(
-        self: Distance,
+        self: Length,
         sketch: Sketch, 
         entry: MappedEdgeDimension,
         dim_map: DimensionMapping
