@@ -5,14 +5,18 @@ import pytest
 from kiconstraint.dimensions import (
     Coincident,
     Distance,
+    DimensionMapping,
     Equal,
     Horizontal,
+    MappedEdgeDimension,
+    MappedPointDimension,
     Midpoint,
     Parallel,
     Perpendicular,
     Vertical,
     parse_suffix,
 )
+from kiconstraint.solver import Sketch
 
 
 # ---------------------------------------------------------------------------
@@ -158,160 +162,205 @@ class TestParseEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# apply_dimension_constraints — integration with solver
+# Helpers for constraint-spec tests
 # ---------------------------------------------------------------------------
 
-from kiconstraint.dimensions import (
-    DimensionMapping,
-    MappedEdgeDimension,
-    MappedPointDimension,
-    apply_dimension_constraints,
-)
-from kiconstraint.solver import Sketch
+
+class _FakeDim:
+    """Minimal stand-in for a Dimension source (used only in MappedEdge/Point)."""
+    pass
 
 
-class _FakeDimension:
-    """Minimal stand-in for a kipy Dimension with prefix/suffix."""
-
-    def __init__(self, prefix: str = "", suffix: str = ""):
-        self.prefix = prefix
-        self.suffix = suffix
-
-
-def _make_edge_entry(sketch, name, x1, y1, x2, y2, suffix=""):
+def _make_line(sketch, x1, y1, x2, y2):
+    """Create a line in the sketch and return it."""
     p1 = sketch.point(x1, y1)
     p2 = sketch.point(x2, y2)
-    line = sketch.line(p1, p2)
-    dim = _FakeDimension(prefix=f"{name}:", suffix=suffix)
-    return MappedEdgeDimension(source=dim, name=name, line=line)
+    return sketch.line(p1, p2)
 
 
-def _make_point_entry(sketch, name, x, y, suffix=""):
+def _edge_entry(sketch, name, x1, y1, x2, y2):
+    """Create a MappedEdgeDimension and return (entry, line)."""
+    line = _make_line(sketch, x1, y1, x2, y2)
+    entry = MappedEdgeDimension(source=_FakeDim(), name=name, line=line)
+    return entry, line
+
+
+def _point_entry(sketch, name, x, y):
+    """Create a MappedPointDimension and return (entry, point)."""
     pt = sketch.point(x, y)
-    dim = _FakeDimension(prefix=f"{name}:", suffix=suffix)
-    return MappedPointDimension(source=dim, name=name, point=pt)
+    entry = MappedPointDimension(source=_FakeDim(), name=name, point=pt)
+    return entry, pt
 
 
-class TestApplyDistance:
+# ---------------------------------------------------------------------------
+# apply_to_line tests
+# ---------------------------------------------------------------------------
+
+
+class TestApplyDistanceLine:
     def test_constrains_length(self):
         sketch = Sketch()
-        entry = _make_edge_entry(sketch, "top", 0, 0, 10, 0, suffix="=5mm")
-        dim_map = DimensionMapping(edges={"top": entry})
-        constraints = apply_dimension_constraints(sketch, dim_map)
-        assert len(constraints) == 1
-        result = sketch.solve()
-        assert result.ok
-        dist = math.hypot(entry.line.p1.u - entry.line.p2.u,
-                          entry.line.p1.v - entry.line.p2.v)
+        line = _make_line(sketch, 0, 0, 10, 0)
+        Distance(5.0).apply_to_line(sketch, line, "top", DimensionMapping())
+        assert sketch.solve().ok
+        dist = math.hypot(line.p1.u - line.p2.u, line.p1.v - line.p2.v)
         assert dist == pytest.approx(5.0, abs=1e-6)
 
 
 class TestApplyVerticalHorizontal:
     def test_vertical(self):
         sketch = Sketch()
-        entry = _make_edge_entry(sketch, "e", 1, 0, 3, 5, suffix="v")
-        dim_map = DimensionMapping(edges={"e": entry})
-        apply_dimension_constraints(sketch, dim_map)
+        line = _make_line(sketch, 1, 0, 3, 5)
+        Vertical().apply_to_line(sketch, line, "e", DimensionMapping())
         assert sketch.solve().ok
-        assert entry.line.p1.u == pytest.approx(entry.line.p2.u, abs=1e-6)
+        assert line.p1.u == pytest.approx(line.p2.u, abs=1e-6)
 
     def test_horizontal(self):
         sketch = Sketch()
-        entry = _make_edge_entry(sketch, "e", 0, 1, 5, 3, suffix="h")
-        dim_map = DimensionMapping(edges={"e": entry})
-        apply_dimension_constraints(sketch, dim_map)
+        line = _make_line(sketch, 0, 1, 5, 3)
+        Horizontal().apply_to_line(sketch, line, "e", DimensionMapping())
         assert sketch.solve().ok
-        assert entry.line.p1.v == pytest.approx(entry.line.p2.v, abs=1e-6)
+        assert line.p1.v == pytest.approx(line.p2.v, abs=1e-6)
 
 
 class TestApplyParallel:
     def test_parallel(self):
         sketch = Sketch()
-        a = _make_edge_entry(sketch, "a", 0, 0, 10, 0, suffix="h")
-        b = _make_edge_entry(sketch, "b", 0, 5, 8, 7, suffix="p(a)")
-        dim_map = DimensionMapping(edges={"a": a, "b": b})
-        apply_dimension_constraints(sketch, dim_map)
+        entry_a, line_a = _edge_entry(sketch, "a", 0, 0, 10, 0)
+        line_b = _make_line(sketch, 0, 5, 8, 7)
+        dim_map = DimensionMapping(edges={"a": entry_a})
+        Horizontal().apply_to_line(sketch, line_a, "a", dim_map)
+        Parallel("a").apply_to_line(sketch, line_b, "b", dim_map)
         assert sketch.solve().ok
-        dy_b = b.line.p2.v - b.line.p1.v
+        dy_b = line_b.p2.v - line_b.p1.v
         assert dy_b == pytest.approx(0.0, abs=1e-6)
 
 
 class TestApplyPerpendicular:
     def test_perpendicular(self):
         sketch = Sketch()
-        a = _make_edge_entry(sketch, "a", 0, 0, 10, 0, suffix="h")
-        b = _make_edge_entry(sketch, "b", 5, 0, 7, 8, suffix="x(a)")
-        dim_map = DimensionMapping(edges={"a": a, "b": b})
-        apply_dimension_constraints(sketch, dim_map)
+        entry_a, line_a = _edge_entry(sketch, "a", 0, 0, 10, 0)
+        line_b = _make_line(sketch, 5, 0, 7, 8)
+        dim_map = DimensionMapping(edges={"a": entry_a})
+        Horizontal().apply_to_line(sketch, line_a, "a", dim_map)
+        Perpendicular("a").apply_to_line(sketch, line_b, "b", dim_map)
         assert sketch.solve().ok
-        dx_b = b.line.p2.u - b.line.p1.u
+        dx_b = line_b.p2.u - line_b.p1.u
         assert dx_b == pytest.approx(0.0, abs=1e-6)
 
 
 class TestApplyEqual:
     def test_equal_length(self):
         sketch = Sketch()
-        a = _make_edge_entry(sketch, "a", 0, 0, 10, 0, suffix="h")
-        b = _make_edge_entry(sketch, "b", 0, 5, 7, 5, suffix="h, e(a)")
-        dim_map = DimensionMapping(edges={"a": a, "b": b})
-        apply_dimension_constraints(sketch, dim_map)
+        entry_a, line_a = _edge_entry(sketch, "a", 0, 0, 10, 0)
+        line_b = _make_line(sketch, 0, 5, 7, 5)
+        dim_map = DimensionMapping(edges={"a": entry_a})
+        Horizontal().apply_to_line(sketch, line_a, "a", dim_map)
+        Horizontal().apply_to_line(sketch, line_b, "b", dim_map)
+        Equal("a").apply_to_line(sketch, line_b, "b", dim_map)
         assert sketch.solve().ok
-        len_a = abs(a.line.p2.u - a.line.p1.u)
-        len_b = abs(b.line.p2.u - b.line.p1.u)
+        len_a = abs(line_a.p2.u - line_a.p1.u)
+        len_b = abs(line_b.p2.u - line_b.p1.u)
         assert len_a == pytest.approx(len_b, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# apply_to_two_points tests
+# ---------------------------------------------------------------------------
+
+
+class TestApplyDistanceTwoPoints:
+    def test_constrains_distance_between_unconnected_points(self):
+        sketch = Sketch()
+        p1 = sketch.point(0, 0)
+        p2 = sketch.point(10, 5)
+        Distance(7.0).apply_to_two_points(
+            sketch, p1, p2, "gap", DimensionMapping(),
+        )
+        assert sketch.solve().ok
+        dist = math.hypot(p1.u - p2.u, p1.v - p2.v)
+        assert dist == pytest.approx(7.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# apply_to_point tests
+# ---------------------------------------------------------------------------
 
 
 class TestApplyCoincident:
     def test_coincident_points(self):
         sketch = Sketch()
-        a = _make_point_entry(sketch, "a", 0, 0, suffix="c(b)")
-        b = _make_point_entry(sketch, "b", 5, 5)
-        dim_map = DimensionMapping(points={"a": a, "b": b})
-        apply_dimension_constraints(sketch, dim_map)
+        pt_a = sketch.point(0, 0)
+        entry_b, pt_b = _point_entry(sketch, "b", 5, 5)
+        dim_map = DimensionMapping(points={"b": entry_b})
+        Coincident("b").apply_to_point(sketch, pt_a, "a", dim_map)
         assert sketch.solve().ok
-        assert a.point.u == pytest.approx(b.point.u, abs=1e-6)
-        assert a.point.v == pytest.approx(b.point.v, abs=1e-6)
+        assert pt_a.u == pytest.approx(pt_b.u, abs=1e-6)
+        assert pt_a.v == pytest.approx(pt_b.v, abs=1e-6)
 
 
 class TestApplyMidpoint:
     def test_point_midpoint_of_edge(self):
         sketch = Sketch()
-        edge = _make_edge_entry(sketch, "seg", 0, 0, 10, 0, suffix="h")
-        pt = _make_point_entry(sketch, "mid_pt", 3, 2, suffix="m(seg)")
-        dim_map = DimensionMapping(edges={"seg": edge}, points={"mid_pt": pt})
-        apply_dimension_constraints(sketch, dim_map)
+        entry_seg, line = _edge_entry(sketch, "seg", 0, 0, 10, 0)
+        pt = sketch.point(3, 2)
+        dim_map = DimensionMapping(edges={"seg": entry_seg})
+        Horizontal().apply_to_line(sketch, line, "seg", dim_map)
+        Midpoint("seg").apply_to_point(sketch, pt, "mid_pt", dim_map)
         assert sketch.solve().ok
-        mid_u = (edge.line.p1.u + edge.line.p2.u) / 2
-        mid_v = (edge.line.p1.v + edge.line.p2.v) / 2
-        assert pt.point.u == pytest.approx(mid_u, abs=1e-6)
-        assert pt.point.v == pytest.approx(mid_v, abs=1e-6)
+        mid_u = (line.p1.u + line.p2.u) / 2
+        mid_v = (line.p1.v + line.p2.v) / 2
+        assert pt.u == pytest.approx(mid_u, abs=1e-6)
+        assert pt.v == pytest.approx(mid_v, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Error tests
+# ---------------------------------------------------------------------------
 
 
 class TestApplyErrors:
-    def test_coin_on_edge_raises(self):
+    def test_coin_on_line_raises(self):
         sketch = Sketch()
-        entry = _make_edge_entry(sketch, "e", 0, 0, 5, 0, suffix="c(other)")
-        dim_map = DimensionMapping(edges={"e": entry})
-        with pytest.raises(ValueError, match=".*requires a point, not an edge"):
-            apply_dimension_constraints(sketch, dim_map)
+        line = _make_line(sketch, 0, 0, 5, 0)
+        with pytest.raises(ValueError, match="requires a point"):
+            Coincident("other").apply_to_line(
+                sketch, line, "e", DimensionMapping(),
+            )
 
     def test_vert_on_point_raises(self):
         sketch = Sketch()
-        entry = _make_point_entry(sketch, "p", 0, 0, suffix="v")
-        dim_map = DimensionMapping(points={"p": entry})
-        with pytest.raises(ValueError, match="requires an edge"):
-            apply_dimension_constraints(sketch, dim_map)
+        pt = sketch.point(0, 0)
+        with pytest.raises(ValueError, match="requires a line"):
+            Vertical().apply_to_point(sketch, pt, "p", DimensionMapping())
 
     def test_missing_edge_reference(self):
         sketch = Sketch()
-        entry = _make_edge_entry(sketch, "e", 0, 0, 5, 0, suffix="p(missing)")
-        dim_map = DimensionMapping(edges={"e": entry})
+        line = _make_line(sketch, 0, 0, 5, 0)
         with pytest.raises(ValueError, match="not found"):
-            apply_dimension_constraints(sketch, dim_map)
+            Parallel("missing").apply_to_line(
+                sketch, line, "e", DimensionMapping(),
+            )
 
     def test_missing_point_reference(self):
         sketch = Sketch()
-        entry = _make_point_entry(sketch, "p", 0, 0, suffix="c(missing)")
-        dim_map = DimensionMapping(points={"p": entry})
+        pt = sketch.point(0, 0)
         with pytest.raises(ValueError, match="not found"):
-            apply_dimension_constraints(sketch, dim_map)
+            Coincident("missing").apply_to_point(
+                sketch, pt, "p", DimensionMapping(),
+            )
+
+    def test_distance_on_point_raises(self):
+        sketch = Sketch()
+        pt = sketch.point(0, 0)
+        with pytest.raises(ValueError, match="requires a line"):
+            Distance(5.0).apply_to_point(sketch, pt, "p", DimensionMapping())
+
+    def test_horiz_on_two_points_raises(self):
+        sketch = Sketch()
+        p1 = sketch.point(0, 0)
+        p2 = sketch.point(5, 5)
+        with pytest.raises(ValueError, match="cannot apply between"):
+            Horizontal().apply_to_two_points(
+                sketch, p1, p2, "gap", DimensionMapping(),
+            )
