@@ -74,6 +74,17 @@ class MappedSegment(MappedGeometry):
     line: Line
     constraints: list[Constraint] = field(default_factory=list)
 
+    @classmethod
+    def create(cls, sketch: Sketch, seg: KiSegment) -> MappedSegment:
+        p1 = sketch.point(_to_mm(seg.start.x), _to_mm(seg.start.y))
+        p2 = sketch.point(_to_mm(seg.end.x), _to_mm(seg.end.y))
+        line = sketch.line(p1, p2)
+        return cls(source=seg, start=p1, end=p2, line=line)
+
+    def write_back(self) -> None:
+        self.source.start = _v2(self.start)
+        self.source.end = _v2(self.end)
+
     @property
     def points(self) -> list[Point]:
         return [self.start, self.end]
@@ -92,6 +103,31 @@ class MappedArc(MappedGeometry):
     arc: Arc
     constraints: list[Constraint] = field(default_factory=list)
 
+    @classmethod
+    def create(cls, sketch: Sketch, arc: KiArc) -> MappedArc:
+        center_v = arc.center()
+        if center_v is None:
+            raise ValueError("Degenerate arc: cannot compute center")
+        c = sketch.point(_to_mm(center_v.x), _to_mm(center_v.y))
+        s = sketch.point(_to_mm(arc.start.x), _to_mm(arc.start.y))
+        e = sketch.point(_to_mm(arc.end.x), _to_mm(arc.end.y))
+        a = sketch.arc(c, s, e)
+        return cls(source=arc, center=c, start=s, end=e, arc=a)
+
+    def write_back(self) -> None:
+        self.source.start = _v2(self.start)
+        self.source.end = _v2(self.end)
+        cx, cy = self.center.u, self.center.v
+        sa = math.atan2(self.start.v - cy, self.start.u - cx)
+        ea = math.atan2(self.end.v - cy, self.end.u - cx)
+        sweep = (ea - sa) % (2 * math.pi)
+        mid_angle = sa + sweep / 2
+        radius = math.hypot(self.start.u - cx, self.start.v - cy)
+        self.source.mid = Vector2.from_xy_mm(
+            cx + radius * math.cos(mid_angle),
+            cy + radius * math.sin(mid_angle),
+        )
+
     @property
     def points(self) -> list[Point]:
         return [self.center, self.start, self.end]
@@ -107,6 +143,19 @@ class MappedCircle(MappedGeometry):
     center: Point
     circle: Circle
     constraints: list[Constraint] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, sketch: Sketch, circ: KiCircle) -> MappedCircle:
+        c = sketch.point(_to_mm(circ.center.x), _to_mm(circ.center.y))
+        radius_mm = _to_mm(circ.radius())
+        circle = sketch.circle(c, radius_mm)
+        return cls(source=circ, center=c, circle=circle)
+
+    def write_back(self) -> None:
+        self.source.center = _v2(self.center)
+        self.source.radius_point = Vector2.from_xy_mm(
+            self.center.u + self.circle.radius.value, self.center.v,
+        )
 
     @property
     def points(self) -> list[Point]:
@@ -130,6 +179,38 @@ class MappedRectangle(MappedGeometry):
     left: Line
     constraints: list[Constraint]
 
+    @classmethod
+    def create(cls, sketch: Sketch, rect: KiRectangle) -> MappedRectangle:
+        tl_x = _to_mm(rect.top_left.x)
+        tl_y = _to_mm(rect.top_left.y)
+        br_x = _to_mm(rect.bottom_right.x)
+        br_y = _to_mm(rect.bottom_right.y)
+        tl = sketch.point(tl_x, tl_y)
+        tr = sketch.point(br_x, tl_y)
+        br = sketch.point(br_x, br_y)
+        bl = sketch.point(tl_x, br_y)
+        top = sketch.line(tl, tr)
+        right = sketch.line(tr, br)
+        bottom = sketch.line(br, bl)
+        left = sketch.line(bl, tl)
+        constraints = [
+            sketch.perpendicular(top, right),
+            sketch.perpendicular(right, bottom),
+            sketch.perpendicular(bottom, left),
+        ]
+        return cls(
+            source=rect,
+            top_left=tl, top_right=tr,
+            bottom_right=br, bottom_left=bl,
+            top=top, right=right,
+            bottom=bottom, left=left,
+            constraints=constraints,
+        )
+
+    def write_back(self) -> None:
+        self.source.top_left = _v2(self.top_left)
+        self.source.bottom_right = _v2(self.bottom_right)
+
     @property
     def points(self) -> list[Point]:
         return [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
@@ -148,6 +229,24 @@ class MappedBezier(MappedGeometry):
     end: Point
     cubic: Cubic
     constraints: list[Constraint] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, sketch: Sketch, bez: KiBezier) -> MappedBezier:
+        p1 = sketch.point(_to_mm(bez.start.x), _to_mm(bez.start.y))
+        p2 = sketch.point(_to_mm(bez.control1.x), _to_mm(bez.control1.y))
+        p3 = sketch.point(_to_mm(bez.control2.x), _to_mm(bez.control2.y))
+        p4 = sketch.point(_to_mm(bez.end.x), _to_mm(bez.end.y))
+        cubic = sketch.cubic(p1, p2, p3, p4)
+        return cls(
+            source=bez, start=p1, control1=p2,
+            control2=p3, end=p4, cubic=cubic,
+        )
+
+    def write_back(self) -> None:
+        self.source.start = _v2(self.start)
+        self.source.control1 = _v2(self.control1)
+        self.source.control2 = _v2(self.control2)
+        self.source.end = _v2(self.end)
 
     @property
     def points(self) -> list[Point]:
@@ -543,101 +642,17 @@ def map_pad(sketch: Sketch, shape: Pad) -> MappedPad:
 
 MappedShape = Union[MappedSegment, MappedArc, MappedCircle, MappedRectangle, MappedBezier]
 
-
-# ---------------------------------------------------------------------------
-# Mapping functions
-# ---------------------------------------------------------------------------
-
-
-def map_shape(sketch: Sketch, shape: KiShape) -> MappedShape:
-    """Map a KiCad GraphicShape into solver entities within *sketch*.
-
-    Coordinates are converted from nanometers to millimeters.
-    """
-    if isinstance(shape, KiSegment):
-        return _map_segment(sketch, shape)
-    if isinstance(shape, KiArc):
-        return _map_arc(sketch, shape)
-    if isinstance(shape, KiCircle):
-        return _map_circle(sketch, shape)
-    if isinstance(shape, KiRectangle):
-        return _map_rectangle(sketch, shape)
-    if isinstance(shape, KiBezier):
-        return _map_bezier(sketch, shape)
-    raise TypeError(f"Unsupported shape type: {type(shape).__name__}")
-
-
-def _map_segment(sketch: Sketch, seg: KiSegment) -> MappedSegment:
-    p1 = sketch.point(_to_mm(seg.start.x), _to_mm(seg.start.y))
-    p2 = sketch.point(_to_mm(seg.end.x), _to_mm(seg.end.y))
-    line = sketch.line(p1, p2)
-    return MappedSegment(source=seg, start=p1, end=p2, line=line)
-
-
-def _map_arc(sketch: Sketch, arc: KiArc) -> MappedArc:
-    center_v = arc.center()
-    if center_v is None:
-        raise ValueError("Degenerate arc: cannot compute center")
-    c = sketch.point(_to_mm(center_v.x), _to_mm(center_v.y))
-    s = sketch.point(_to_mm(arc.start.x), _to_mm(arc.start.y))
-    e = sketch.point(_to_mm(arc.end.x), _to_mm(arc.end.y))
-    a = sketch.arc(c, s, e)
-    return MappedArc(source=arc, center=c, start=s, end=e, arc=a)
-
-
-def _map_circle(sketch: Sketch, circ: KiCircle) -> MappedCircle:
-    c = sketch.point(_to_mm(circ.center.x), _to_mm(circ.center.y))
-    radius_mm = _to_mm(circ.radius())
-    circle = sketch.circle(c, radius_mm)
-    return MappedCircle(source=circ, center=c, circle=circle)
-
-
-def _map_rectangle(sketch: Sketch, rect: KiRectangle) -> MappedRectangle:
-    tl_x = _to_mm(rect.top_left.x)
-    tl_y = _to_mm(rect.top_left.y)
-    br_x = _to_mm(rect.bottom_right.x)
-    br_y = _to_mm(rect.bottom_right.y)
-
-    tl = sketch.point(tl_x, tl_y)
-    tr = sketch.point(br_x, tl_y)
-    br = sketch.point(br_x, br_y)
-    bl = sketch.point(tl_x, br_y)
-
-    top = sketch.line(tl, tr)
-    right = sketch.line(tr, br)
-    bottom = sketch.line(br, bl)
-    left = sketch.line(bl, tl)
-
-    constraints = [
-        sketch.perpendicular(top, right),
-        sketch.perpendicular(right, bottom),
-        sketch.perpendicular(bottom, left),
-    ]
-
-    return MappedRectangle(
-        source=rect,
-        top_left=tl, top_right=tr,
-        bottom_right=br, bottom_left=bl,
-        top=top, right=right,
-        bottom=bottom, left=left,
-        constraints=constraints,
-    )
-
-
-def _map_bezier(sketch: Sketch, bez: KiBezier) -> MappedBezier:
-    p1 = sketch.point(_to_mm(bez.start.x), _to_mm(bez.start.y))
-    p2 = sketch.point(_to_mm(bez.control1.x), _to_mm(bez.control1.y))
-    p3 = sketch.point(_to_mm(bez.control2.x), _to_mm(bez.control2.y))
-    p4 = sketch.point(_to_mm(bez.end.x), _to_mm(bez.end.y))
-    cubic = sketch.cubic(p1, p2, p3, p4)
-    return MappedBezier(
-        source=bez, start=p1, control1=p2,
-        control2=p3, end=p4, cubic=cubic,
-    )
+_SHAPE_MAP: dict[type, type] = {
+    KiSegment: MappedSegment,
+    KiArc: MappedArc,
+    KiCircle: MappedCircle,
+    KiRectangle: MappedRectangle,
+    KiBezier: MappedBezier,
+}
 
 
 # ---------------------------------------------------------------------------
-# Back-propagation of solved values
+# Mapping / write-back entry points
 # ---------------------------------------------------------------------------
 
 
@@ -646,55 +661,15 @@ def _v2(point: Point) -> Vector2:
     return Vector2.from_xy_mm(point.u, point.v)
 
 
-def _write_back_segment(m: MappedSegment) -> None:
-    m.source.start = _v2(m.start)
-    m.source.end = _v2(m.end)
+def map_shape(sketch: Sketch, shape: KiShape) -> MappedShape:
+    """Map a KiCad GraphicShape into solver entities within *sketch*.
 
-
-def _write_back_arc(m: MappedArc) -> None:
-    m.source.start = _v2(m.start)
-    m.source.end = _v2(m.end)
-    # KiCAD arcs store start/mid/end; the solver stores center/start/end.
-    # Compute the midpoint on the arc from the solved center and endpoints.
-    cx, cy = m.center.u, m.center.v
-    sa = math.atan2(m.start.v - cy, m.start.u - cx)
-    ea = math.atan2(m.end.v - cy, m.end.u - cx)
-    sweep = (ea - sa) % (2 * math.pi)
-    mid_angle = sa + sweep / 2
-    radius = math.hypot(m.start.u - cx, m.start.v - cy)
-    m.source.mid = Vector2.from_xy_mm(
-        cx + radius * math.cos(mid_angle),
-        cy + radius * math.sin(mid_angle),
-    )
-
-
-def _write_back_circle(m: MappedCircle) -> None:
-    m.source.center = _v2(m.center)
-    # radius_point sits at center + (radius, 0)
-    m.source.radius_point = Vector2.from_xy_mm(
-        m.center.u + m.circle.radius.value, m.center.v,
-    )
-
-
-def _write_back_rectangle(m: MappedRectangle) -> None:
-    m.source.top_left = _v2(m.top_left)
-    m.source.bottom_right = _v2(m.bottom_right)
-
-
-def _write_back_bezier(m: MappedBezier) -> None:
-    m.source.start = _v2(m.start)
-    m.source.control1 = _v2(m.control1)
-    m.source.control2 = _v2(m.control2)
-    m.source.end = _v2(m.end)
-
-
-_WRITE_BACK = {
-    MappedSegment: _write_back_segment,
-    MappedArc: _write_back_arc,
-    MappedCircle: _write_back_circle,
-    MappedRectangle: _write_back_rectangle,
-    MappedBezier: _write_back_bezier,
-}
+    Coordinates are converted from nanometers to millimeters.
+    """
+    for ki_type, mapped_cls in _SHAPE_MAP.items():
+        if isinstance(shape, ki_type):
+            return mapped_cls.create(sketch, shape)
+    raise TypeError(f"Unsupported shape type: {type(shape).__name__}")
 
 
 def write_back_shapes(
@@ -715,9 +690,6 @@ def write_back_shapes(
 
     sources: list[KiShape] = []
     for m in mapped:
-        writer = _WRITE_BACK.get(type(m))
-        if writer is None:
-            raise TypeError(f"No write-back for {type(m).__name__}")
-        writer(m)
+        m.write_back()
         sources.append(m.source)
     return sources
