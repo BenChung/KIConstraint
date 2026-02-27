@@ -459,16 +459,6 @@ def apply_dimension_constraints(
         name = _extract_name(dim) or "<unnamed>"
         specs = parse_suffix(suffix)
 
-        # Replace Distance specs with DistanceProj when the dimension
-        # carries a projection direction (orthogonal or aligned).
-        proj_dir = _get_proj_direction(dim)
-        if proj_dir is not None and any(isinstance(s, Distance) for s in specs):
-            axis_line = _make_axis_line(sketch, *proj_dir)
-            specs = [
-                DistanceProj(s.value_mm, axis_line) if isinstance(s, Distance) else s
-                for s in specs
-            ]
-
         if isinstance(dim, (AlignedDimension, OrthogonalDimension)):
             start_mm = (_to_mm(dim.start.x), _to_mm(dim.start.y))
             end_mm = (_to_mm(dim.end.x), _to_mm(dim.end.y))
@@ -478,6 +468,25 @@ def apply_dimension_constraints(
             if p_start is not None and p_end is not None:
                 key = frozenset({p_start.handle, p_end.handle})
                 line = edge_index.get(key)
+
+                # Use projected distance for orthogonal dimensions
+                # (always) and for aligned dimensions whose direction
+                # differs from the edge they span.
+                use_proj = isinstance(dim, OrthogonalDimension) or (
+                    isinstance(dim, AlignedDimension)
+                    and line is not None
+                    and not _directions_parallel(dim, line)
+                )
+                if use_proj and any(isinstance(s, Distance) for s in specs):
+                    proj_dir = _get_proj_direction(dim)
+                    if proj_dir is not None:
+                        axis_line = _make_axis_line(sketch, *proj_dir)
+                        specs = [
+                            DistanceProj(s.value_mm, axis_line)
+                            if isinstance(s, Distance) else s
+                            for s in specs
+                        ]
+
                 if line is not None:
                     for spec in specs:
                         constraints.append(
