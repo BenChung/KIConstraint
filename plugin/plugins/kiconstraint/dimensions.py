@@ -198,6 +198,39 @@ def map_dimensions(
 
 
 # ---------------------------------------------------------------------------
+# Projection direction helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_proj_direction(dim: Dimension) -> tuple[float, float] | None:
+    """Return the unit projection direction for a dimension, or None.
+
+    For orthogonal dimensions, the direction is along the constrained axis.
+    For aligned dimensions, the direction is along the original start→end vector.
+    """
+    if isinstance(dim, OrthogonalDimension):
+        alignment = dim.alignment
+        if alignment == 1:  # AA_X_AXIS
+            return (1.0, 0.0)
+        elif alignment == 2:  # AA_Y_AXIS
+            return (0.0, 1.0)
+    elif isinstance(dim, AlignedDimension):
+        dx = dim.end.x - dim.start.x
+        dy = dim.end.y - dim.start.y
+        length = math.hypot(dx, dy)
+        if length > 0:
+            return (dx / length, dy / length)
+    return None
+
+
+def _make_axis_line(sketch: Sketch, dx: float, dy: float) -> Line:
+    """Create a fixed construction line with the given direction."""
+    p1 = sketch.point(0.0, 0.0, fixed=True)
+    p2 = sketch.point(dx, dy, fixed=True)
+    return sketch.line(p1, p2)
+
+
+# ---------------------------------------------------------------------------
 # Suffix constraint language — value objects
 # ---------------------------------------------------------------------------
 
@@ -238,6 +271,18 @@ class Distance(ConstraintSpec):
 
     def apply_to_two_points(self, sketch, p1, p2, name, dim_map):
         return sketch.distance(p1, p2, self.value_mm)
+
+
+@dataclass(frozen=True)
+class DistanceProj(ConstraintSpec):
+    value_mm: float
+    axis: Line
+
+    def apply_to_line(self, sketch, line, name, dim_map):
+        return sketch.distance_proj(line.p1, line.p2, self.axis, self.value_mm)
+
+    def apply_to_two_points(self, sketch, p1, p2, name, dim_map):
+        return sketch.distance_proj(p1, p2, self.axis, self.value_mm)
 
 
 @dataclass(frozen=True)
@@ -395,6 +440,16 @@ def apply_dimension_constraints(
 
         name = _extract_name(dim) or "<unnamed>"
         specs = parse_suffix(suffix)
+
+        # Replace Distance specs with DistanceProj when the dimension
+        # carries a projection direction (orthogonal or aligned).
+        proj_dir = _get_proj_direction(dim)
+        if proj_dir is not None and any(isinstance(s, Distance) for s in specs):
+            axis_line = _make_axis_line(sketch, *proj_dir)
+            specs = [
+                DistanceProj(s.value_mm, axis_line) if isinstance(s, Distance) else s
+                for s in specs
+            ]
 
         if isinstance(dim, (AlignedDimension, OrthogonalDimension)):
             start_mm = (_to_mm(dim.start.x), _to_mm(dim.start.y))
