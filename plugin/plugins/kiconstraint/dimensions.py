@@ -230,6 +230,24 @@ def _make_axis_line(sketch: Sketch, dx: float, dy: float) -> Line:
     return sketch.line(p1, p2)
 
 
+def _directions_parallel(
+    dim: AlignedDimension, line: Line, tolerance: float = 1e-6,
+) -> bool:
+    """Check if an aligned dimension's direction matches a line's direction."""
+    ddx = dim.end.x - dim.start.x
+    ddy = dim.end.y - dim.start.y
+    dlen = math.hypot(ddx, ddy)
+    if dlen == 0:
+        return True
+    ldx = line.p2.u - line.p1.u
+    ldy = line.p2.v - line.p1.v
+    llen = math.hypot(ldx, ldy)
+    if llen == 0:
+        return True
+    cross = (ddx / dlen) * (ldy / llen) - (ddy / dlen) * (ldx / llen)
+    return abs(cross) < tolerance
+
+
 # ---------------------------------------------------------------------------
 # Suffix constraint language — value objects
 # ---------------------------------------------------------------------------
