@@ -94,7 +94,7 @@ class Sketch:
 
     def distance_proj(self, ptA: Entity, ptB: Entity, axis: Line, value: float) -> Constraint:
         return _wrap_constraint(slvs.add_constraint(
-            _USER_GROUP, slvs.ConstraintType.PROJ_PT_DISTANCE, self._wp,
+            _USER_GROUP, int(slvs.ConstraintType.PROJ_PT_DISTANCE), self._wp,
             value, ptA._raw, ptB._raw, axis._raw
         ))
 

@@ -163,6 +163,34 @@ def test_angle():
     assert angle_deg == pytest.approx(45.0, abs=0.1)
 
 
+def test_distance_proj_horizontal():
+    sketch = Sketch()
+    p1 = sketch.point(0, 0, fixed=True)
+    p2 = sketch.point(10, 5)
+    # Axis along X
+    a1 = sketch.point(0, 0, fixed=True)
+    a2 = sketch.point(1, 0, fixed=True)
+    axis = sketch.line(a1, a2)
+    sketch.distance_proj(p1, p2, axis, 7.0)
+    result = sketch.solve()
+    assert result.ok
+    assert abs(p2.u - p1.u) == pytest.approx(7.0, abs=1e-6)
+
+
+def test_distance_proj_vertical():
+    sketch = Sketch()
+    p1 = sketch.point(0, 0, fixed=True)
+    p2 = sketch.point(10, 5)
+    # Axis along Y
+    a1 = sketch.point(0, 0, fixed=True)
+    a2 = sketch.point(0, 1, fixed=True)
+    axis = sketch.line(a1, a2)
+    sketch.distance_proj(p1, p2, axis, 3.0)
+    result = sketch.solve()
+    assert result.ok
+    assert abs(p2.v - p1.v) == pytest.approx(3.0, abs=1e-6)
+
+
 def test_on_line():
     sketch = Sketch()
     p1 = sketch.point(0, 0, fixed=True)

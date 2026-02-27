@@ -5,6 +5,7 @@ import pytest
 from kiconstraint.dimensions import (
     Coincident,
     Distance,
+    DistanceProj,
     DimensionMapping,
     Equal,
     Horizontal,
@@ -265,6 +266,53 @@ class TestApplyEqual:
 
 
 # ---------------------------------------------------------------------------
+# apply_to_line tests — DistanceProj
+# ---------------------------------------------------------------------------
+
+
+class TestApplyDistanceProjLine:
+    def test_constrains_horizontal_projection(self):
+        sketch = Sketch()
+        line = _make_line(sketch, 0, 0, 10, 5)
+        axis = _make_line(sketch, 0, 0, 1, 0)
+        sketch.dragged(axis.p1)
+        sketch.dragged(axis.p2)
+        DistanceProj(8.0, axis).apply_to_line(sketch, line, "top", DimensionMapping())
+        assert sketch.solve().ok
+        dx = abs(line.p2.u - line.p1.u)
+        assert dx == pytest.approx(8.0, abs=1e-6)
+
+    def test_constrains_vertical_projection(self):
+        sketch = Sketch()
+        line = _make_line(sketch, 0, 0, 10, 5)
+        axis = _make_line(sketch, 0, 0, 0, 1)
+        sketch.dragged(axis.p1)
+        sketch.dragged(axis.p2)
+        DistanceProj(3.0, axis).apply_to_line(sketch, line, "side", DimensionMapping())
+        assert sketch.solve().ok
+        dy = abs(line.p2.v - line.p1.v)
+        assert dy == pytest.approx(3.0, abs=1e-6)
+
+    def test_constrains_diagonal_projection(self):
+        sketch = Sketch()
+        # Line at an angle
+        p1 = sketch.point(0, 0, fixed=True)
+        p2 = sketch.point(10, 10)
+        line = sketch.line(p1, p2)
+        # Axis along 45 degrees
+        a1 = sketch.point(0, 0, fixed=True)
+        a2 = sketch.point(1, 1, fixed=True)
+        axis = sketch.line(a1, a2)
+        DistanceProj(7.0, axis).apply_to_line(sketch, line, "diag", DimensionMapping())
+        assert sketch.solve().ok
+        # Projected distance along (1,1)/sqrt(2) direction
+        dx = line.p2.u - line.p1.u
+        dy = line.p2.v - line.p1.v
+        proj = abs(dx + dy) / math.sqrt(2)
+        assert proj == pytest.approx(7.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
 # apply_to_two_points tests
 # ---------------------------------------------------------------------------
 
@@ -280,6 +328,36 @@ class TestApplyDistanceTwoPoints:
         assert sketch.solve().ok
         dist = math.hypot(p1.u - p2.u, p1.v - p2.v)
         assert dist == pytest.approx(7.0, abs=1e-6)
+
+
+class TestApplyDistanceProjTwoPoints:
+    def test_constrains_horizontal_projection_between_points(self):
+        sketch = Sketch()
+        p1 = sketch.point(0, 0, fixed=True)
+        p2 = sketch.point(10, 5)
+        axis = _make_line(sketch, 0, 0, 1, 0)
+        sketch.dragged(axis.p1)
+        sketch.dragged(axis.p2)
+        DistanceProj(6.0, axis).apply_to_two_points(
+            sketch, p1, p2, "gap", DimensionMapping(),
+        )
+        assert sketch.solve().ok
+        dx = abs(p2.u - p1.u)
+        assert dx == pytest.approx(6.0, abs=1e-6)
+
+    def test_constrains_vertical_projection_between_points(self):
+        sketch = Sketch()
+        p1 = sketch.point(0, 0, fixed=True)
+        p2 = sketch.point(10, 5)
+        axis = _make_line(sketch, 0, 0, 0, 1)
+        sketch.dragged(axis.p1)
+        sketch.dragged(axis.p2)
+        DistanceProj(4.0, axis).apply_to_two_points(
+            sketch, p1, p2, "gap", DimensionMapping(),
+        )
+        assert sketch.solve().ok
+        dy = abs(p2.v - p1.v)
+        assert dy == pytest.approx(4.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
