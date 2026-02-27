@@ -476,7 +476,7 @@ def _map_pad_circle(
 def _map_pad_rectangle(
     sketch: Sketch, layer: PadStackLayer, center: Point, x: int, y: int,
 ) -> MappedPadRectangle:
-    half_size = layer.size / 2
+    half_size = layer.size * 0.5
     tl = sketch.point(_to_mm(x - half_size.x), _to_mm(y - half_size.y))
     tr = sketch.point(_to_mm(x + half_size.x), _to_mm(y - half_size.y))
     br = sketch.point(_to_mm(x + half_size.x), _to_mm(y + half_size.y))
@@ -503,8 +503,8 @@ def _map_pad_rectangle(
 def _map_pad_trapezoid(
     sketch: Sketch, layer: PadStackLayer, center: Point, x: int, y: int,
 ) -> MappedPadTrapezoid:
-    trap_delta = layer.trapezoid_delta / 2
-    half_size = layer.size / 2
+    trap_delta = layer.trapezoid_delta * 0.5
+    half_size = layer.size * 0.5
     tl = sketch.point(_to_mm(x - half_size.x - trap_delta.y),
                       _to_mm(y - half_size.y + trap_delta.x))
     tr = sketch.point(_to_mm(x + half_size.x + trap_delta.y),
@@ -572,7 +572,7 @@ def _map_pad_chamfered_rect(
     sketch: Sketch, layer: PadStackLayer, center: Point, x: int, y: int,
 ) -> MappedPadChamferedRect:
     chamfer_dist = min(layer.size.x, layer.size.y) * layer.chamfer_ratio
-    half_size = layer.size / 2
+    half_size = layer.size * 0.5
 
     tl = sketch.point(_to_mm(x - half_size.x), _to_mm(y - half_size.y))
     tr = sketch.point(_to_mm(x + half_size.x), _to_mm(y - half_size.y))

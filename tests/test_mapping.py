@@ -1,15 +1,23 @@
 import math
 
 import pytest
+from kipy.board_types import Pad, PadStackShape
 from kipy.common_types import Polygon
+from kipy.geometry import Vector2
 from kipy.proto.common.types import base_types_pb2
 
 from kiconstraint.mapping import (
     MappedArc,
     MappedBezier,
     MappedCircle,
+    MappedPad,
+    MappedPadChamferedRect,
+    MappedPadCircle,
+    MappedPadRectangle,
+    MappedPadTrapezoid,
     MappedRectangle,
     MappedSegment,
+    map_pad,
     map_shape,
     write_back_shapes,
 )
@@ -477,3 +485,409 @@ class TestWriteBackErrors:
         assert not result.ok
         with pytest.raises(ValueError, match="solve failed"):
             write_back_shapes([m], result)
+
+
+# -- pad helpers ----------------------------------------------------------------
+
+
+def _make_pad(pos_x_mm, pos_y_mm, shape, size_x_mm, size_y_mm, **kwargs):
+    """Create a kipy Pad with one copper layer of the given shape and size.
+
+    Extra kwargs:
+      trapezoid_delta_x_mm, trapezoid_delta_y_mm  – for trapezoid pads
+      chamfer_ratio                                – for chamfered rect pads
+      chamfered_corners                            – dict of corner bools
+    """
+    pad = Pad()
+    pad.position = Vector2.from_xy_mm(pos_x_mm, pos_y_mm)
+
+    layer = pad.padstack.copper_layers[0]
+    layer.shape = shape
+    layer.size = Vector2.from_xy_mm(size_x_mm, size_y_mm)
+
+    if "trapezoid_delta_x_mm" in kwargs or "trapezoid_delta_y_mm" in kwargs:
+        dx = kwargs.get("trapezoid_delta_x_mm", 0.0)
+        dy = kwargs.get("trapezoid_delta_y_mm", 0.0)
+        layer.trapezoid_delta = Vector2.from_xy_mm(dx, dy)
+
+    if "chamfer_ratio" in kwargs:
+        layer.chamfer_ratio = kwargs["chamfer_ratio"]
+
+    if "chamfered_corners" in kwargs:
+        corners = layer.chamfered_corners
+        cc = kwargs["chamfered_corners"]
+        corners.top_left = cc.get("top_left", False)
+        corners.top_right = cc.get("top_right", False)
+        corners.bottom_left = cc.get("bottom_left", False)
+        corners.bottom_right = cc.get("bottom_right", False)
+
+    return pad
+
+
+# -- pad mapping tests ----------------------------------------------------------
+
+
+class TestMapPadCircle:
+    def test_creates_mapped_pad_circle(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 10, PadStackShape.PSS_CIRCLE, 4, 4)
+        m = map_pad(sketch, pad)
+
+        assert isinstance(m, MappedPad)
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadCircle)
+
+    def test_center_position(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 10, PadStackShape.PSS_CIRCLE, 4, 4)
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        assert m.position.u == pytest.approx(5.0, abs=0.01)
+        assert m.position.v == pytest.approx(10.0, abs=0.01)
+
+    def test_radius(self):
+        sketch = Sketch()
+        pad = _make_pad(0, 0, PadStackShape.PSS_CIRCLE, 6, 6)
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        assert layer.circle.radius.value == pytest.approx(3.0, abs=0.01)
+
+
+class TestMapPadRectangle:
+    def test_creates_mapped_pad_rectangle(self):
+        sketch = Sketch()
+        pad = _make_pad(0, 0, PadStackShape.PSS_RECTANGLE, 10, 6)
+        m = map_pad(sketch, pad)
+
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadRectangle)
+
+    def test_corner_positions(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 5, PadStackShape.PSS_RECTANGLE, 10, 6)
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        assert layer.tl.u == pytest.approx(0.0, abs=0.01)
+        assert layer.tl.v == pytest.approx(2.0, abs=0.01)
+        assert layer.tr.u == pytest.approx(10.0, abs=0.01)
+        assert layer.tr.v == pytest.approx(2.0, abs=0.01)
+        assert layer.br.u == pytest.approx(10.0, abs=0.01)
+        assert layer.br.v == pytest.approx(8.0, abs=0.01)
+        assert layer.bl.u == pytest.approx(0.0, abs=0.01)
+        assert layer.bl.v == pytest.approx(8.0, abs=0.01)
+
+    def test_perpendicular_constraints(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 5, PadStackShape.PSS_RECTANGLE, 10, 6)
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        _assert_perpendicular(layer.tl, layer.tr, layer.tl, layer.bl)
+        _assert_perpendicular(layer.tr, layer.tl, layer.tr, layer.br)
+
+    def test_roundrect_maps_as_rectangle(self):
+        sketch = Sketch()
+        pad = _make_pad(0, 0, PadStackShape.PSS_ROUNDRECT, 8, 4)
+        m = map_pad(sketch, pad)
+
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadRectangle)
+
+
+class TestMapPadTrapezoid:
+    def test_creates_mapped_pad_trapezoid_vertical_skew(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=2.0, trapezoid_delta_y_mm=0.0,
+        )
+        m = map_pad(sketch, pad)
+
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadTrapezoid)
+
+    def test_vertical_skew_constraints(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=2.0, trapezoid_delta_y_mm=0.0,
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        # With vertical skew, left and right should be parallel
+        _assert_parallel(layer.tl, layer.bl, layer.tr, layer.br, tol=0.01)
+        # Top and bottom should be equal length
+        top_len = _edge_len(layer.tl, layer.tr)
+        bottom_len = _edge_len(layer.bl, layer.br)
+        assert top_len == pytest.approx(bottom_len, abs=0.01)
+
+    def test_creates_mapped_pad_trapezoid_horizontal_skew(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=0.0, trapezoid_delta_y_mm=1.5,
+        )
+        m = map_pad(sketch, pad)
+
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadTrapezoid)
+
+    def test_horizontal_skew_constraints(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=0.0, trapezoid_delta_y_mm=1.5,
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        # With horizontal skew, top and bottom should be parallel
+        _assert_parallel(layer.tl, layer.tr, layer.bl, layer.br, tol=0.01)
+        # Left and right should be equal length
+        left_len = _edge_len(layer.tl, layer.bl)
+        right_len = _edge_len(layer.tr, layer.br)
+        assert left_len == pytest.approx(right_len, abs=0.01)
+
+
+class TestMapPadChamferedRect:
+    def test_creates_mapped_pad_chamfered_rect(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": True,
+                "bottom_left": True, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+
+        assert len(m.mapped_geometry) == 1
+        assert isinstance(m.mapped_geometry[0], MappedPadChamferedRect)
+
+    def test_all_corners_chamfered(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": True,
+                "bottom_left": True, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        assert layer.chamfer_tl is not None
+        assert layer.chamfer_tr is not None
+        assert layer.chamfer_bl is not None
+        assert layer.chamfer_br is not None
+
+    def test_partial_chamfer(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": False,
+                "bottom_left": False, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        assert layer.chamfer_tl is not None
+        assert layer.chamfer_tr is None
+        assert layer.chamfer_bl is None
+        assert layer.chamfer_br is not None
+
+    def test_perpendicular_construction_lines(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": True,
+                "bottom_left": True, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        layer = m.mapped_geometry[0]
+        _assert_perpendicular(
+            layer.construction_h.p1, layer.construction_h.p2,
+            layer.construction_v.p1, layer.construction_v.p2,
+        )
+
+
+# -- pad write-back tests -------------------------------------------------------
+
+
+class TestWriteBackPadCircle:
+    def test_size_updated(self):
+        sketch = Sketch()
+        pad = _make_pad(0, 0, PadStackShape.PSS_CIRCLE, 4, 4)
+        m = map_pad(sketch, pad)
+
+        # Change the radius via a constraint
+        layer = m.mapped_geometry[0]
+        sketch.diameter(layer.circle, 10.0)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        new_size = pad.padstack.copper_layers[0].size
+        assert _to_mm(new_size.x) == pytest.approx(10.0, abs=0.01)
+        assert _to_mm(new_size.y) == pytest.approx(10.0, abs=0.01)
+
+    def test_position_updated(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 10, PadStackShape.PSS_CIRCLE, 4, 4)
+        m = map_pad(sketch, pad)
+
+        m.position.move(8.0, 12.0)
+        sketch.dragged(m.position)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        new_pos = pad.position
+        assert _to_mm(new_pos.x) == pytest.approx(8.0, abs=0.01)
+        assert _to_mm(new_pos.y) == pytest.approx(12.0, abs=0.01)
+
+
+class TestWriteBackPadRectangle:
+    def test_size_updated(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 5, PadStackShape.PSS_RECTANGLE, 10, 6)
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        new_size = pad.padstack.copper_layers[0].size
+        assert _to_mm(new_size.x) == pytest.approx(10.0, abs=0.01)
+        assert _to_mm(new_size.y) == pytest.approx(6.0, abs=0.01)
+
+    def test_size_after_perturbation(self):
+        sketch = Sketch()
+        pad = _make_pad(5, 5, PadStackShape.PSS_RECTANGLE, 10, 6)
+        m = map_pad(sketch, pad)
+
+        layer = m.mapped_geometry[0]
+        # Move tr corner to make the rectangle wider
+        layer.tr.move(12.0, 2.0)
+        sketch.dragged(layer.tr)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        new_size = pad.padstack.copper_layers[0].size
+        # Width and height should reflect the new rectangle dimensions
+        width = _to_mm(new_size.x)
+        height = _to_mm(new_size.y)
+        # The rectangle should still be valid (positive dimensions)
+        assert width > 0
+        assert height > 0
+
+
+class TestWriteBackPadTrapezoid:
+    def test_vertical_skew_size_and_delta(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=2.0, trapezoid_delta_y_mm=0.0,
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        layer = pad.padstack.copper_layers[0]
+        size = layer.size
+        delta = layer.trapezoid_delta
+        # Original construction width was 10mm, height average was 6mm
+        assert _to_mm(size.x) == pytest.approx(10.0, abs=0.1)
+        assert _to_mm(size.y) == pytest.approx(6.0, abs=0.1)
+        # Delta x should be half the difference of left and right edge lengths
+        assert _to_mm(delta.x) == pytest.approx(2.0, abs=0.1)
+        assert _to_mm(delta.y) == pytest.approx(0.0, abs=0.1)
+
+    def test_horizontal_skew_size_and_delta(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_TRAPEZOID, 10, 6,
+            trapezoid_delta_x_mm=0.0, trapezoid_delta_y_mm=1.5,
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        layer = pad.padstack.copper_layers[0]
+        size = layer.size
+        delta = layer.trapezoid_delta
+        assert _to_mm(size.y) == pytest.approx(6.0, abs=0.1)
+        assert _to_mm(delta.x) == pytest.approx(0.0, abs=0.1)
+        assert _to_mm(delta.y) == pytest.approx(1.5, abs=0.1)
+
+
+class TestWriteBackPadChamferedRect:
+    def test_size_updated(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": True,
+                "bottom_left": True, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        layer = pad.padstack.copper_layers[0]
+        size = layer.size
+        assert _to_mm(size.x) == pytest.approx(10.0, abs=0.1)
+        assert _to_mm(size.y) == pytest.approx(6.0, abs=0.1)
+
+    def test_chamfer_ratio_updated(self):
+        sketch = Sketch()
+        pad = _make_pad(
+            5, 5, PadStackShape.PSS_CHAMFEREDRECT, 10, 6,
+            chamfer_ratio=0.25,
+            chamfered_corners={
+                "top_left": True, "top_right": True,
+                "bottom_left": True, "bottom_right": True,
+            },
+        )
+        m = map_pad(sketch, pad)
+        result = sketch.solve()
+        assert result.ok
+
+        m.write_back()
+        layer = pad.padstack.copper_layers[0]
+        assert layer.chamfer_ratio == pytest.approx(0.25, abs=0.02)
