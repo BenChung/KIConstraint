@@ -273,6 +273,10 @@ class MappedPadCircle(MappedGeometry):
     circle: Circle
     constraints: list[Constraint]
 
+    def write_back(self) -> None:
+        d = self.circle.radius.value * 2
+        self.source.size = Vector2.from_xy_mm(d, d)
+
     @property
     def points(self) -> list[Point]:
         return [self.center]
@@ -296,6 +300,11 @@ class MappedPadRectangle(MappedGeometry):
     left: Line
     construction: Line
     constraints: list[Constraint]
+
+    def write_back(self) -> None:
+        width = math.hypot(self.tr.u - self.tl.u, self.tr.v - self.tl.v)
+        height = math.hypot(self.bl.u - self.tl.u, self.bl.v - self.tl.v)
+        self.source.size = Vector2.from_xy_mm(width, height)
 
     @property
     def points(self) -> list[Point]:
@@ -322,6 +331,43 @@ class MappedPadTrapezoid(MappedGeometry):
     midpoint_b: Point
     construction: Line
     constraints: list[Constraint]
+
+    def write_back(self) -> None:
+        construction_len = math.hypot(
+            self.midpoint_b.u - self.midpoint_a.u,
+            self.midpoint_b.v - self.midpoint_a.v,
+        )
+        left_len = math.hypot(
+            self.bl.u - self.tl.u, self.bl.v - self.tl.v,
+        )
+        right_len = math.hypot(
+            self.br.u - self.tr.u, self.br.v - self.tr.v,
+        )
+        top_len = math.hypot(
+            self.tr.u - self.tl.u, self.tr.v - self.tl.v,
+        )
+        bottom_len = math.hypot(
+            self.br.u - self.bl.u, self.br.v - self.bl.v,
+        )
+        original_delta = self.source.trapezoid_delta
+        if original_delta.x != 0 or original_delta.y == 0:
+            # Vertical skew (or no skew):
+            # construction connects midpoints of left/right edges.
+            self.source.size = Vector2.from_xy_mm(
+                construction_len, (left_len + right_len) / 2,
+            )
+            self.source.trapezoid_delta = Vector2.from_xy_mm(
+                (right_len - left_len) / 2, 0,
+            )
+        else:
+            # Horizontal skew:
+            # construction connects midpoints of top/bottom edges.
+            self.source.size = Vector2.from_xy_mm(
+                (top_len + bottom_len) / 2, construction_len,
+            )
+            self.source.trapezoid_delta = Vector2.from_xy_mm(
+                0, (top_len - bottom_len) / 2,
+            )
 
     @property
     def points(self) -> list[Point]:
@@ -357,6 +403,27 @@ class MappedPadChamferedRect(MappedGeometry):
     construction_h: Line
     constraints: list[Constraint]
 
+    def write_back(self) -> None:
+        width = math.hypot(
+            self.right_mid.u - self.left_mid.u,
+            self.right_mid.v - self.left_mid.v,
+        )
+        height = math.hypot(
+            self.bottom_mid.u - self.top_mid.u,
+            self.bottom_mid.v - self.top_mid.v,
+        )
+        self.source.size = Vector2.from_xy_mm(width, height)
+        # Derive chamfer_ratio from any existing chamfer's construction length.
+        for chamfer in (self.chamfer_tl, self.chamfer_tr,
+                        self.chamfer_bl, self.chamfer_br):
+            if chamfer is not None:
+                chamfer_dist = math.hypot(
+                    chamfer.h_construction.p2.u - chamfer.h_construction.p1.u,
+                    chamfer.h_construction.p2.v - chamfer.h_construction.p1.v,
+                )
+                self.source.chamfer_ratio = chamfer_dist / min(width, height)
+                break
+
     @property
     def points(self) -> list[Point]:
         pts: list[Point] = [self.center, self.tl, self.tr, self.br, self.bl,
@@ -391,6 +458,11 @@ class MappedPad:
     position: Point
     mapped_geometry: list[MappedPadLayer]
     constraints: list[Constraint]
+
+    def write_back(self) -> None:
+        self.source.position = _v2(self.position)
+        for layer in self.mapped_geometry:
+            layer.write_back()
 
 def _map_pad_circle(
     sketch: Sketch, layer: PadStackLayer, center: Point, x: int, y: int,
